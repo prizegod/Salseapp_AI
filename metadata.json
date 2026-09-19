@@ -1,0 +1,6 @@
+{
+  "name": "ShopSale Management System",
+  "description": "Enterprise retail management system with ASP.NET Core 6.0 Web API, SQLite with EF Core, React Vite frontend, and AI Document Scanner for receipts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

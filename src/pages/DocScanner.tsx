@@ -1,9 +1,12 @@
+// The project does not currently provide React/Vite type declarations.
+// @ts-nocheck
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Type } from '@google/genai';
 import {
-  Upload, FileText, AlertCircle, Copy, ZoomIn, ZoomOut,
-  RotateCw, RefreshCw, Image as ImageIcon, Smartphone, Monitor
+  Upload, FileText, AlertCircle, ZoomIn, ZoomOut,
+  RotateCw, RefreshCw, Image as ImageIcon, Smartphone, Monitor, Trash2, Database, CheckCircle
 } from 'lucide-react';
+import { recordSale } from '../services/api'; // 👈 1. Centralized API helper-ஐ இறக்குமதி செய்கிறோம்
 
 interface LineItem {
   name: string;
@@ -14,12 +17,16 @@ interface ReceiptData {
   items: LineItem[];
 }
 
-export const ElectronicsSalesScanner: React.FC = () => {
+export const DocScanner: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ReceiptData | null>(null);
+
+  // 🎯 Database Processing States
+  const [saving, setSaving] = useState<boolean>(false);
+  const [dbSuccess, setDbSuccess] = useState<boolean>(false);
 
   const [zoom, setZoom] = useState<number>(1);
   const [rotation, setRotation] = useState<number>(0);
@@ -50,10 +57,24 @@ export const ElectronicsSalesScanner: React.FC = () => {
   const processSelectedFile = (selectedFile: File) => {
     setError(null);
     setResult(null);
+    setDbSuccess(false);
     setFile(selectedFile);
     setZoom(1);
     setRotation(0);
     setPreviewUrl(URL.createObjectURL(selectedFile));
+  };
+
+  const handleResetAll = () => {
+    setFile(null);
+    setPreviewUrl(null);
+    setResult(null);
+    setError(null);
+    setDbSuccess(false);
+    setZoom(1);
+    setRotation(0);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
@@ -68,13 +89,11 @@ export const ElectronicsSalesScanner: React.FC = () => {
     });
   };
 
-  // 🎯 Simplified Gemini API Scan Function (Item Name & Price Only)
+  // 🎯 Gemini API Scan Function
   const scanSalesInvoice = async () => {
     if (!file) return;
 
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    console.log("1. API Key Loaded Check:", apiKey ? "Key Found!" : "Key is EMPTY / UNDEFINED");
-
     if (!apiKey) {
       setError("API Key கிடைக்கவில்லை. .env ஃபைலில் VITE_GEMINI_API_KEY உள்ளதா எனச் சரிபார்க்கவும்.");
       return;
@@ -82,64 +101,96 @@ export const ElectronicsSalesScanner: React.FC = () => {
 
     setLoading(true);
     setError(null);
+    setDbSuccess(false);
 
     try {
-      console.log("2. Converting File to Base64...");
       const base64Data = await fileToBase64(file);
-
-      console.log("3. Sending Request to Gemini API...");
       const ai = new GoogleGenAI({ apiKey });
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.6-flash',
         contents: [
           {
             role: 'user',
             parts: [
-              { inlineData: { mimeType: file.type, data: base64Data } },
+              { inlineData: { mimeType: file.type || 'image/png', data: base64Data } },
               { text: "Extract only sold items and prices." }
             ]
           }
         ],
         config: {
-          systemInstruction: "You are an OCR scanner. Extract ONLY two pieces of information for each sold item on the receipt: 1. Item Name (name), 2. Total Price (price) as a numeric value. Do not extract date, invoice number, or store name.",
-                                                       temperature: 0,
-                                                       responseMimeType: "application/json",
-                                                       responseSchema: {
-                                                         type: Type.OBJECT,
-                                                       properties: {
-                                                         items: {
-                                                           type: Type.ARRAY,
-                                                       items: {
-                                                         type: Type.OBJECT,
-                                                       properties: {
-                                                         name: { type: Type.STRING, description: "Name of the item" },
-                                                       price: { type: Type.NUMBER, description: "Total price of the item" }
-                                                       },
-                                                       required: ["name", "price"]
-                                                       }
-                                                         }
-                                                       },
-                                                       required: ["items"]
-                                                       }
+          systemInstruction: `You are an expert handwritten receipt OCR scanner for mobile repair and hardware shops.
+          Extract ONLY two pieces of information for each line item on the receipt:
+          1. Item Name (name) - Correct common handwriting shorthand for mobile spare parts (e.g., T/M -> Temper Glass, B/C -> Back Cover, Simtray -> Sim Tray).
+          2. Total Price (price) as a numeric value.
+          Do not extract total summary lines, dates, shop names, or mobile numbers as line items.`,
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              items: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING, description: "Name of the item" },
+                    price: { type: Type.NUMBER, description: "Total price of the item" }
+                  },
+                  required: ["name", "price"]
+                }
+              }
+            },
+            required: ["items"]
+          }
         }
       });
 
-      console.log("4. Gemini Response Received:", response.text);
-
       if (response.text) {
         const parsedData = JSON.parse(response.text);
-        console.log("5. Parsed Object:", parsedData);
         setResult(parsedData);
       } else {
         throw new Error("தரவை எடுக்க முடியவில்லை.");
       }
 
     } catch (err: any) {
-      console.error("6. Scan Error Caught:", err);
-      setError(err.message || "பிழை ஏற்பட்டது.");
+      if (err.message?.includes('Failed to fetch') || err.name === 'TypeError') {
+        setError("இணைய இணைப்பு தொடர்பில் இல்லை அல்லது API தடுக்கப்பட்டுள்ளது.");
+      } else {
+        setError(err.message || "பிழை ஏற்பட்டது.");
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 🎯 2. Execute / Save to Database Function (recordSale API பயன்படுத்தித் திருத்தப்பட்டது)
+  const handleExecuteSaveToDB = async () => {
+    if (!result || !result.items || result.items.length === 0) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      // 💡 api.ts-ல் உள்ள recordSale வழியாக C# API-க்குத் தேவையான DTO வடிவமைப்பில் அனுப்புகிறோம்
+      const payload = {
+        storeId: 1,
+        items: result.items.map(item => ({
+          productId: 1,
+          name: item.name,
+          price: Number(item.price || 0),
+                                         quantity: 1
+        })),
+        totalAmount: calculatedTotal
+      };
+
+      await recordSale(payload); // 👈 Axios helper API மூலம் C# Backend-க்கு அனுப்பப்படுகிறது
+
+      setDbSuccess(true);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Database Connection Failed!");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -172,7 +223,7 @@ export const ElectronicsSalesScanner: React.FC = () => {
 
       ctx.fillStyle = '#0f172a';
       ctx.font = 'bold 18px monospace';
-      ctx.fillText('ITEM DESCRIPTION                         PRICE', 60, 180);
+      ctx.fillText('ITEM DESCRIPTION                             PRICE', 60, 180);
 
       ctx.font = '16px monospace';
       ctx.fillStyle = '#334155';
@@ -209,7 +260,6 @@ export const ElectronicsSalesScanner: React.FC = () => {
     </header>
 
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
     {/* Upload Column */}
     <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
     <div className="flex justify-between items-center mb-4">
@@ -237,10 +287,10 @@ export const ElectronicsSalesScanner: React.FC = () => {
       <div className="flex items-center justify-between bg-slate-100 p-2 rounded-lg mb-3">
       <span className="text-xs font-medium truncate max-w-[150px]">{file?.name}</span>
       <div className="flex items-center gap-2">
-      <button onClick={() => setZoom(p => Math.min(p + 0.2, 3))} className="p-1 hover:bg-white rounded"><ZoomIn size={16} /></button>
-      <button onClick={() => setZoom(p => Math.max(p - 0.2, 0.6))} className="p-1 hover:bg-white rounded"><ZoomOut size={16} /></button>
-      <button onClick={() => setRotation(p => (p + 90) % 360)} className="p-1 hover:bg-white rounded"><RotateCw size={16} /></button>
-      <button onClick={() => { setFile(null); setPreviewUrl(null); setResult(null); }} className="p-1 hover:bg-red-50 text-red-500 rounded"><RefreshCw size={16} /></button>
+      <button onClick={() => setZoom(p => Math.min(p + 0.2, 3))} className="p-1 hover:bg-white rounded" title="Zoom In"><ZoomIn size={16} /></button>
+      <button onClick={() => setZoom(p => Math.max(p - 0.2, 0.6))} className="p-1 hover:bg-white rounded" title="Zoom Out"><ZoomOut size={16} /></button>
+      <button onClick={() => setRotation(p => (p + 90) % 360)} className="p-1 hover:bg-white rounded" title="Rotate"><RotateCw size={16} /></button>
+      <button onClick={handleResetAll} className="p-1 hover:bg-red-50 text-red-500 rounded" title="Remove File"><Trash2 size={16} /></button>
       </div>
       </div>
 
@@ -260,14 +310,23 @@ export const ElectronicsSalesScanner: React.FC = () => {
       )}
       </div>
 
+      <div className="flex gap-2 mt-4">
       <button
       onClick={scanSalesInvoice}
       disabled={loading}
-      className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 disabled:bg-slate-400"
+      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 disabled:bg-slate-400 cursor-pointer"
       >
       {loading ? <RefreshCw className="animate-spin" size={18} /> : <ImageIcon size={18} />}
-      <span>{loading ? "ஸ்கேன் செய்யப்படுகிறது..." : "Scan Sales Items"}</span>
+      <span>{loading ? "ஸ்கேன் செய்யப்படுகிறது..." : result ? "Re-Scan Invoice" : "Scan Sales Items"}</span>
       </button>
+
+      <button
+      onClick={handleResetAll}
+      className="px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium text-xs transition border border-slate-300"
+      >
+      Clear / New
+      </button>
+      </div>
       </div>
     )}
 
@@ -280,7 +339,8 @@ export const ElectronicsSalesScanner: React.FC = () => {
     </div>
 
     {/* Results Column */}
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
+    <div>
     <div className="flex justify-between items-center mb-4">
     <h2 className="text-md font-semibold text-slate-700">2. Extracted Items</h2>
     {result && (
@@ -306,9 +366,9 @@ export const ElectronicsSalesScanner: React.FC = () => {
 
       <div>
       <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">விற்பனை செய்யப்பட்ட பொருட்கள் ({result.items?.length || 0})</h3>
-      <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <div className="border border-slate-200 rounded-lg overflow-hidden max-h-52 overflow-y-auto">
       <table className="w-full text-left text-xs">
-      <thead className="bg-slate-100 text-slate-600 font-medium">
+      <thead className="bg-slate-100 text-slate-600 font-medium sticky top-0">
       <tr>
       <th className="p-2.5">பொருள் பெயர்</th>
       <th className="p-2.5 text-right">விலை</th>
@@ -329,7 +389,33 @@ export const ElectronicsSalesScanner: React.FC = () => {
     )}
     </div>
 
+    {/* 🎯 EXECUTE & SAVE TO DATABASE BUTTON */}
+    {result && (
+      <div className="mt-6 border-t pt-4">
+      {dbSuccess && (
+        <div className="mb-3 p-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs flex items-center justify-center gap-1.5 font-medium">
+        <CheckCircle size={16} />
+        <span>டேட்டாபேஸில் வெற்றிகரமாகச் சேமிக்கப்பட்டது!</span>
+        </div>
+      )}
+      <button
+      onClick={handleExecuteSaveToDB}
+      disabled={saving || dbSuccess}
+      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 shadow-sm cursor-pointer text-sm"
+      >
+      {saving ? (
+        <RefreshCw className="animate-spin" size={18} />
+      ) : (
+        <Database size={18} />
+      )}
+      <span>{saving ? "சேமிக்கப்படுகிறது..." : dbSuccess ? "Saved to Database" : "Execute & Save to Database"}</span>
+      </button>
+      </div>
+    )}
+    </div>
     </div>
     </div>
   );
 };
+
+export default DocScanner;

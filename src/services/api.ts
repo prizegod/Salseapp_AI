@@ -12,17 +12,16 @@ import {
 } from "../types";
 
 // 1. Base URL with /api prefix
-export const API_BASE_URL =
-(import.meta as ImportMeta & { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ||
-"http://localhost:5000/api";
-
+// 1. Base URL - Local IP Address for Mobile Capacitor App
+// 🎯 IP Address-ஐ நேரடியாக வழங்கவும்
+export const API_BASE_URL = "http://10.247.208.35:5000/api";
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 60000,
   headers: {
     "Content-Type": "application/json",
   },
-  withCredentials: true,
+  withCredentials: false,
 });
 
 // 2. JWT Request Interceptor

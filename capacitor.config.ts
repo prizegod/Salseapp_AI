@@ -5,11 +5,11 @@ const config: CapacitorConfig = {
   appName: 'ShopSale POS',
   webDir: 'dist',
   server: {
-    androidScheme: 'http',
+    androidScheme: 'https',
     cleartext: true,
     allowNavigation: [
-      '192.168.31.57:5000',
-      '10.247.208.35:5000'
+      'shopsale-api.onrender.com',
+      'localhost'
     ]
   },
   plugins: {

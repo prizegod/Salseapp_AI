@@ -11,7 +11,7 @@ import {
   SqlQueryResult,
 } from "../types";
 
-// 1. Base URL Configuration (.env-ல் உள்ள http://localhost:5000/api-ஐ முன்னுரிமையாக எடுக்கிறது)
+// 1. Base URL Configuration (.env-ல் உள்ள URL-ஐ எடுக்கிறது)
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
@@ -87,10 +87,12 @@ export const logoutUser = () => {
 };
 
 // ==================== PRODUCTS API ====================
-// 🎯 Store ID வைத்து பில்டர் செய்து பொருட்களை எடுக்கிறது
+// 🎯 Store ID அல்லது User ID வைத்து பில்டர் செய்து குறிப்பிட்ட பயனரின் பொருட்களை மட்டும் எடுக்கிறது
 export const getProducts = async (): Promise<Product[]> => {
-  const storeId = getUserStoreId();
+  const user = getCurrentUserInfo();
+  const storeId = user?.storeId || user?.id;
   const url = storeId ? `/products?storeId=${storeId}` : "/products";
+  
   const response = await api.get<Product[]>(url);
   return response.data;
 };
@@ -100,12 +102,16 @@ export const getProductById = async (id: number): Promise<Product> => {
   return response.data;
 };
 
+// 🎯 புதிய பொருளை உருவாக்கும் போது Store ID இணைக்கப்படுகிறது
 export const createProduct = async (product: Omit<Product, "id">): Promise<Product> => {
-  const storeId = getUserStoreId();
+  const user = getCurrentUserInfo();
+  const storeId = user?.storeId || user?.id || 1;
+  
   const payload = {
     ...product,
-    storeId: (product as any).storeId || storeId || 1,
+    storeId: (product as any).storeId || storeId,
   };
+  
   const response = await api.post<Product>("/products", payload);
   return response.data;
 };

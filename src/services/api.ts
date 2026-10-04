@@ -11,10 +11,10 @@ import {
   SqlQueryResult,
 } from "../types";
 
-// 1. Base URL with /api prefix
-// 1. Base URL - Local IP Address for Mobile Capacitor App
-// 🎯 IP Address-ஐ நேரடியாக வழங்கவும்
-export const API_BASE_URL = "http://10.247.208.35:5000/api";
+// 1. Base URL Configuration (.env-ல் உள்ள http://localhost:5000/api-ஐ முன்னுரிமையாக எடுக்கிறது)
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 60000,
@@ -23,6 +23,22 @@ const api = axios.create({
   },
   withCredentials: false,
 });
+
+// Helper: லாகின் செய்துள்ள பயனரின் விவரங்களை LocalStorage-லிருந்து எடுக்கும் செயல்பாடு
+const getCurrentUserInfo = () => {
+  try {
+    const userStr = localStorage.getItem("user");
+    if (!userStr) return null;
+    return JSON.parse(userStr);
+  } catch (e) {
+    return null;
+  }
+};
+
+const getUserStoreId = (): number | null => {
+  const user = getCurrentUserInfo();
+  return user ? (user.storeId || user.id || null) : null;
+};
 
 // 2. JWT Request Interceptor
 api.interceptors.request.use(
@@ -39,22 +55,22 @@ api.interceptors.request.use(
 // 3. Response Interceptor
 api.interceptors.response.use(
   (response) => response,
-                              (error) => {
-                                if (error.response && error.response.status === 401) {
-                                  const isLoginUrl = error.config?.url?.includes("/auth/login");
-                                  if (!isLoginUrl) {
-                                    localStorage.removeItem("token");
-                                    localStorage.removeItem("user");
-                                    window.location.href = "/login";
-                                  }
-                                }
-                                return Promise.reject(error);
-                              }
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      const isLoginUrl = error.config?.url?.includes("/auth/login");
+      if (!isLoginUrl) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        window.location.href = "/login";
+      }
+    }
+    return Promise.reject(error);
+  }
 );
 
 // ==================== AUTH API ====================
 export const loginUser = async (credentials: { username: string; password: string }) => {
-  const response = await api.post<{ token: string; user: { id: number; username: string; role: string } }>(
+  const response = await api.post<{ token: string; user: { id: number; username: string; role: string; storeId?: number } }>(
     "/auth/login",
     credentials
   );
@@ -71,8 +87,11 @@ export const logoutUser = () => {
 };
 
 // ==================== PRODUCTS API ====================
+// 🎯 Store ID வைத்து பில்டர் செய்து பொருட்களை எடுக்கிறது
 export const getProducts = async (): Promise<Product[]> => {
-  const response = await api.get<Product[]>("/products");
+  const storeId = getUserStoreId();
+  const url = storeId ? `/products?storeId=${storeId}` : "/products";
+  const response = await api.get<Product[]>(url);
   return response.data;
 };
 
@@ -82,7 +101,12 @@ export const getProductById = async (id: number): Promise<Product> => {
 };
 
 export const createProduct = async (product: Omit<Product, "id">): Promise<Product> => {
-  const response = await api.post<Product>("/products", product);
+  const storeId = getUserStoreId();
+  const payload = {
+    ...product,
+    storeId: (product as any).storeId || storeId || 1,
+  };
+  const response = await api.post<Product>("/products", payload);
   return response.data;
 };
 
@@ -102,13 +126,21 @@ export const getStores = async (): Promise<Store[]> => {
   return response.data;
 };
 
-// 🎯 Capitalized '/Sales' to match C# SalesController Route
+// 🎯 User ID மற்றும் Store ID வைத்து தனித்தனியாக Sales Data எடுக்கிறது
 export const getSales = async (): Promise<DailySale[]> => {
-  const response = await api.get<DailySale[]>("/Sales");
+  const user = getCurrentUserInfo();
+  let url = "/Sales";
+
+  if (user?.storeId) {
+    url = `/Sales?storeId=${user.storeId}`;
+  } else if (user?.id) {
+    url = `/Sales?queryUserId=${user.id}`;
+  }
+
+  const response = await api.get<DailySale[]>(url);
   return response.data;
 };
 
-// 🎯 C# SalesController DTO-விற்கு துல்லியமாக பொருந்தும் Payload (userId நீக்கப்பட்டுள்ளது)
 export interface CreateSalePayload {
   storeId: number;
   items: Array<{
@@ -121,24 +153,24 @@ export interface CreateSalePayload {
 }
 
 export const recordSale = async (data: any): Promise<any> => {
-  // C# API எதிர்பார்க்கும் சரியான வடிவத்திற்கு டேட்டாவை மாற்றுகிறோம்
+  const currentStoreId = getUserStoreId() || data.storeId || 1;
   const payload: CreateSalePayload = {
-    storeId: data.storeId || 1, // Store ID இல்லை என்றால் Default 1
+    storeId: currentStoreId,
     items: data.items && data.items.length > 0
-    ? data.items.map((item: any) => ({
-      productId: item.productId || 1,
-      name: item.name || item.productName || "Product",
-      price: Number(item.price || 0),
-                                     quantity: Number(item.quantity || item.quantitySold || 1)
-    }))
-    : [
-      {
-        productId: data.productId || 1,
-        name: data.productName || "Product",
-        price: Number(data.price || data.totalAmount || 0),
-        quantity: Number(data.quantitySold || 1)
-      }
-    ],
+      ? data.items.map((item: any) => ({
+          productId: item.productId || 1,
+          name: item.name || item.productName || "Product",
+          price: Number(item.price || 0),
+          quantity: Number(item.quantity || item.quantitySold || 1)
+        }))
+      : [
+          {
+            productId: data.productId || 1,
+            name: data.productName || "Product",
+            price: Number(data.price || data.totalAmount || 0),
+            quantity: Number(data.quantitySold || 1)
+          }
+        ],
     totalAmount: Number(data.totalAmount || data.price || 0)
   };
 
@@ -165,12 +197,18 @@ export const scanDocument = async (file: File): Promise<DocScanResult> => {
 };
 
 export const getSummaryReport = async (): Promise<SummaryReport> => {
-  const response = await api.get<SummaryReport>("/reports/summary");
+  const user = getCurrentUserInfo();
+  const storeId = user?.storeId || user?.id;
+  const url = storeId ? `/reports/summary?storeId=${storeId}` : "/reports/summary";
+  const response = await api.get<SummaryReport>(url);
   return response.data;
 };
 
 export const getDailySalesRecords = async (): Promise<DailySalesRecord[]> => {
-  const response = await api.get<DailySalesRecord[]>("/reports/daily-sales");
+  const user = getCurrentUserInfo();
+  const storeId = user?.storeId || user?.id;
+  const url = storeId ? `/reports/daily-sales?storeId=${storeId}` : "/reports/daily-sales";
+  const response = await api.get<DailySalesRecord[]>(url);
   return response.data;
 };
 

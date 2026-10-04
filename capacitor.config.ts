@@ -7,9 +7,11 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'http',
     cleartext: true,
-    allowNavigation: ['10.247.208.35:5000']
+    allowNavigation: [
+      '192.168.31.57:5000',
+      '10.247.208.35:5000'
+    ]
   },
-  // 🎯 இந்த பகுதியைச் சேருங்கள் (CORS கட்டுப்பாடுகளை ஆண்ட்ராய்டு OS அளவில் உடைக்கும்)
   plugins: {
     CapacitorHttp: {
       enabled: true,

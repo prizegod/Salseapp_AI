@@ -1,497 +1,379 @@
-import React, { useState, useEffect, useMemo } from "react";
-import {
-  Package,
-  Plus,
-  Search,
-  Edit2,
-  Trash2,
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence, Variants } from 'framer-motion';
+import { 
+  ArrowLeft, 
+  Search, 
+  Plus, 
+  Edit3, 
+  Trash2, 
   AlertTriangle,
-  CheckCircle2,
   X,
-  RefreshCw,
-  Loader2
-} from "lucide-react";
-import { toast } from "react-toastify";
-import { getProducts, createProduct, updateProduct, deleteProduct } from "../services/api";
-import { Product } from "../types";
+  CheckCircle2
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { getProducts, createProduct, updateProduct, deleteProduct } from '../services/api'; // 🎯 API இணைப்புகள்
+
+interface Product {
+  id: number;
+  name: string;
+  category: string;
+  price: number;
+  stock: number;
+}
+
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.08 }
+  }
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 15, scale: 0.96 },
+  visible: { 
+    opacity: 1, 
+    y: 0, 
+    scale: 1,
+    transition: { type: 'spring' as const, stiffness: 280, damping: 22 }
+  }
+};
 
 export const Products: React.FC = () => {
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("All");
-
-  // Modal State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [formData, setFormData] = useState({ name: '', category: 'Grocery', price: '', stock: '' });
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Form State
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("Hardware");
-  const [customCategory, setCustomCategory] = useState("");
-  const [price, setPrice] = useState<number | "">("");
-  const [stock, setStock] = useState<number | "">("");
-  const [saving, setSaving] = useState(false);
-
-  const fetchProductsList = async () => {
+  // 🎯 1. டேட்டாபேஸிலிருந்து தயாரிப்புகளை (Products) Fetch செய்தல்
+  const fetchProductsFromDB = async () => {
     try {
-      setLoading(true);
+      setIsLoading(true);
       const data = await getProducts();
-      setProducts(data);
-    } catch (err: any) {
-      toast.error("Failed to load products from database.");
+      if (data) {
+        setProducts(data);
+      }
+    } catch (err) {
+      console.error('Failed to load products from database:', err);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchProductsList();
-
-    const handleDbUpdate = () => {
-      fetchProductsList();
-    };
-    window.addEventListener("shopsale-db-updated", handleDbUpdate);
-    return () => window.removeEventListener("shopsale-db-updated", handleDbUpdate);
+    fetchProductsFromDB();
   }, []);
 
-  // Memoize distinct category list
-  const existingCategories = useMemo(() => {
-    return Array.from(new Set(products.map((p) => p.category))).filter(Boolean);
-  }, [products]);
+  const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
+  const filteredProducts = products.filter(p => 
+    (selectedCategory === 'All' || p.category === selectedCategory) &&
+    p.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const categories = ["All", ...existingCategories];
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 2500);
+  };
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const matchesSearch =
-      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesCategory = selectedCategory === "All" || p.category === selectedCategory;
-      return matchesSearch && matchesCategory;
-    });
-  }, [products, searchTerm, selectedCategory]);
-
-  const handleOpenAddModal = () => {
-    setEditingProduct(null);
-    setName("");
-    setCategory(existingCategories[0] || "Hardware");
-    setCustomCategory("");
-    setPrice("");
-    setStock("");
+  const handleOpenModal = (product?: Product) => {
+    if (product) {
+      setEditingProduct(product);
+      setFormData({
+        name: product.name,
+        category: product.category,
+        price: product.price.toString(),
+        stock: product.stock.toString()
+      });
+    } else {
+      setEditingProduct(null);
+      setFormData({ name: '', category: 'Grocery', price: '', stock: '' });
+    }
     setIsModalOpen(true);
   };
 
-  const handleOpenEditModal = (p: Product) => {
-    setEditingProduct(p);
-    setName(p.name);
-    setCategory(p.category);
-    setCustomCategory("");
-    setPrice(p.price);
-    setStock(p.stock);
-    setIsModalOpen(true);
-  };
-
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-    setEditingProduct(null);
-  };
-
+  // 🎯 2. புதிய தயாரிப்பைச் சேர்த்தல் அல்லது திருத்துதல் (Database Save/Update)
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalCategory = category === "NEW" ? customCategory.trim() : category;
+    if (!formData.name || !formData.price || !formData.stock) return;
 
-    if (!name.trim() || !finalCategory || price === "" || stock === "") {
-      toast.warning("Please fill in all product fields correctly.");
-      return;
-    }
-
-    setSaving(true);
     try {
       if (editingProduct) {
+        // Update via API
         await updateProduct(editingProduct.id, {
-          name: name.trim(),
-                            category: finalCategory,
-                            price: Number(price),
-                            stock: Number(stock),
+          name: formData.name,
+          category: formData.category,
+          price: Number(formData.price),
+          stock: Number(formData.stock)
         });
-        toast.success(`Updated "${name}" successfully.`);
+        showToast('Product updated successfully!');
       } else {
+        // Create via API
         await createProduct({
-          name: name.trim(),
-                            category: finalCategory,
-                            price: Number(price),
-                            stock: Number(stock),
+          name: formData.name,
+          category: formData.category,
+          price: Number(formData.price),
+          stock: Number(formData.stock)
         });
-        toast.success(`Created product "${name}" successfully.`);
+        showToast('New product added to database!');
       }
 
-      handleCloseModal();
-      fetchProductsList();
-      window.dispatchEvent(new CustomEvent("shopsale-db-updated"));
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || "Failed to save product.");
-    } finally {
-      setSaving(false);
+      setIsModalOpen(false);
+      fetchProductsFromDB(); // டேட்டாவை உடனே ரெஃப்ரெஷ் செய்தல்
+    } catch (err) {
+      console.error('Failed to save product:', err);
+      alert('Failed to save product. Please check backend connection.');
     }
   };
 
-  const handlePromptDelete = (product: Product) => {
-    setProductToDelete(product);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!productToDelete) return;
+  // 🎯 3. தயாரிப்பை நீக்குதல் (Database Delete)
+  const handleDeleteProduct = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this product?')) return;
 
     try {
-      setDeleting(true);
-      await deleteProduct(productToDelete.id);
-      toast.success(`Deleted product "${productToDelete.name}" successfully.`);
-      setProductToDelete(null);
-      await fetchProductsList();
-      window.dispatchEvent(new CustomEvent("shopsale-db-updated"));
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || "Failed to delete product from SQLite.");
-    } finally {
-      setDeleting(false);
+      await deleteProduct(id);
+      showToast('Product deleted from database!');
+      fetchProductsFromDB();
+    } catch (err) {
+      console.error('Failed to delete product:', err);
+      alert('Failed to delete product.');
     }
   };
 
   return (
-    <div className="space-y-6">
-    {/* Header Banner */}
-    <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-    <div>
-    <div className="flex items-center gap-2">
-    <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
-    <Package className="w-5 h-5" />
-    </span>
-    <h2 className="text-xl font-bold text-slate-900">Inventory Catalog</h2>
-    </div>
-    <p className="text-xs text-slate-500 mt-1">
-    Manage product lines, categories, MSRP pricing, and live inventory levels
-    </p>
-    </div>
-
-    <div className="flex items-center gap-3">
-    <button
-    onClick={fetchProductsList}
-    disabled={loading}
-    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
-    title="Refresh Inventory"
+    <motion.div 
+      className="min-h-screen bg-[#18181B] p-4 md:p-8 text-[#FFFBEB] pb-32 max-w-7xl mx-auto"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
     >
-    <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-    </button>
-    <button
-    onClick={handleOpenAddModal}
-    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-    >
-    <Plus className="w-4 h-4" />
-    <span>Add New Product</span>
-    </button>
-    </div>
-    </div>
-
-    {/* Filters & Search */}
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
-    <div className="relative w-full sm:w-80">
-    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-    <input
-    type="text"
-    placeholder="Search products by name or category..."
-    value={searchTerm}
-    onChange={(e) => setSearchTerm(e.target.value)}
-    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-300/80 rounded-lg text-xs text-slate-900 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-colors"
-    />
-    </div>
-
-    <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
-    {categories.map((cat) => (
-      <button
-      key={cat}
-      onClick={() => setSelectedCategory(cat)}
-      className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
-        selectedCategory === cat
-        ? "bg-slate-900 text-white"
-        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-      }`}
-      >
-      {cat}
-      </button>
-    ))}
-    </div>
-    </div>
-
-    {/* Products Table */}
-    <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden relative">
-    <div className="overflow-x-auto">
-    <table className="w-full text-left text-xs text-slate-600">
-    <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
-    <tr>
-    <th className="px-6 py-3.5">ID</th>
-    <th className="px-6 py-3.5">Product Name</th>
-    <th className="px-6 py-3.5">Category</th>
-    <th className="px-6 py-3.5">Unit Price</th>
-    <th className="px-6 py-3.5">Stock Status</th>
-    <th className="px-6 py-3.5 text-right">Actions</th>
-    </tr>
-    </thead>
-    <tbody className="divide-y divide-slate-100">
-    {loading && products.length === 0 ? (
-      <tr>
-      <td colSpan={6} className="p-8 text-center text-slate-400">
-      <div className="flex items-center justify-center gap-2">
-      <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
-      <span>Fetching items from database...</span>
-      </div>
-      </td>
-      </tr>
-    ) : filteredProducts.length === 0 ? (
-      <tr>
-      <td colSpan={6} className="p-8 text-center text-slate-400">
-      No products matched your search or category filter.
-      </td>
-      </tr>
-    ) : (
-      filteredProducts.map((p) => {
-        const isLow = p.stock < 20;
-        const isOut = p.stock <= 0;
-        return (
-          <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
-          <td className="px-6 py-3.5 font-mono font-medium text-indigo-600">
-          #{p.id}
-          </td>
-          <td className="px-6 py-3.5 font-semibold text-slate-900">
-          {p.name}
-          </td>
-          <td className="px-6 py-3.5">
-          <span className="inline-block px-2.5 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-          {p.category}
-          </span>
-          </td>
-          <td className="px-6 py-3.5 font-bold text-slate-800">
-          ₹{p.price.toFixed(2)}
-          </td>
-          <td className="px-6 py-3.5">
-          <span
-          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
-            isOut
-            ? "bg-rose-50 text-rose-700 border border-rose-200"
-            : isLow
-            ? "bg-amber-50 text-amber-700 border border-amber-200"
-            : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-          }`}
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center space-x-3">
+          <motion.button 
+            whileTap={{ scale: 0.9 }}
+            onClick={() => navigate('/dashboard')}
+            className="p-2.5 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 text-[#FDE68A]"
           >
-          {isOut ? (
-            "Out of Stock (0)"
-          ) : isLow ? (
-            <>
-            <AlertTriangle className="w-3 h-3 text-amber-600" />
-            Low: {p.stock} units
-            </>
-          ) : (
-            <>
-            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            In Stock: {p.stock} units
-            </>
-          )}
-          </span>
-          </td>
-          <td className="px-6 py-3.5 text-right">
-          <div className="flex items-center justify-end gap-2">
-          <button
-          onClick={() => handleOpenEditModal(p)}
-          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors cursor-pointer"
-          title="Edit"
-          >
-          <Edit2 className="w-3.5 h-3.5" />
-          </button>
-          <button
-          onClick={() => handlePromptDelete(p)}
-          className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
-          title="Delete Product"
-          >
-          <Trash2 className="w-3.5 h-3.5" />
-          </button>
+            <ArrowLeft className="w-5 h-5" />
+          </motion.button>
+          <div>
+            <h1 className="text-2xl font-bold text-[#FFFBEB]">Product Inventory</h1>
+            <p className="text-xs text-[#FDE68A]/70">Live Database Stock & Prices</p>
           </div>
-          </td>
-          </tr>
-        );
-      })
-    )}
-    </tbody>
-    </table>
-    </div>
-    </div>
+        </div>
 
-    {/* Add / Edit Product Modal */}
-    {isModalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-      <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-      <h3 className="text-sm font-bold text-slate-900">
-      {editingProduct ? "Edit Product Details" : "Add New Inventory Product"}
-      </h3>
-      <button
-      onClick={handleCloseModal}
-      className="p-1 text-slate-400 hover:text-slate-600 rounded-md cursor-pointer"
-      >
-      <X className="w-4 h-4" />
-      </button>
+        <motion.button
+          whileTap={{ scale: 0.93 }}
+          onClick={() => handleOpenModal()}
+          className="px-4 py-2.5 bg-[#F59E0B] text-[#18181B] rounded-2xl text-xs font-bold flex items-center space-x-2 shadow-lg hover:bg-[#D97706] transition-all cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          <span className="hidden sm:inline">Add Product</span>
+        </motion.button>
       </div>
 
-      <form onSubmit={handleSaveProduct} className="p-6 space-y-4">
-      <div>
-      <label className="block text-xs font-medium text-slate-700 mb-1">
-      Product Name *
-      </label>
-      <input
-      type="text"
-      required
-      value={name}
-      onChange={(e) => setName(e.target.value)}
-      placeholder="e.g. Wireless Barcode Scanner 2D"
-      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-      />
+      {/* Search & Filters */}
+      <div className="space-y-3 mb-6">
+        <div className="relative">
+          <Search className="absolute left-4 top-3.5 w-5 h-5 text-[#FDE68A]/50" />
+          <input 
+            type="text" 
+            placeholder="Search products from database..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-12 pr-4 py-3 bg-[#27272A] border border-[#F59E0B]/20 rounded-2xl text-[#FFFBEB] placeholder-[#FDE68A]/40 focus:outline-none focus:border-[#F59E0B] transition-all"
+          />
+        </div>
+
+        <div className="flex space-x-2 overflow-x-auto pb-1 scrollbar-none">
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                selectedCategory === cat 
+                  ? 'bg-[#F59E0B] text-[#18181B] font-bold shadow-md shadow-[#F59E0B]/20' 
+                  : 'bg-[#27272A] text-[#FDE68A]/70 border border-[#F59E0B]/10 hover:text-[#FFFBEB]'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div>
-      <label className="block text-xs font-medium text-slate-700 mb-1">
-      Category *
-      </label>
-      <select
-      value={category}
-      onChange={(e) => setCategory(e.target.value)}
-      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
-      >
-      {existingCategories.map((cat) => (
-        <option key={cat} value={cat}>
-        {cat}
-        </option>
-      ))}
-      <option value="NEW">+ Create New Category...</option>
-      </select>
+      {/* Product Grid */}
+      {isLoading ? (
+        <div className="text-center py-20 text-[#FDE68A]/70 text-sm">Loading inventory from database...</div>
+      ) : filteredProducts.length === 0 ? (
+        <div className="text-center py-20 text-[#FDE68A]/70 text-sm">No products found in database. Add a new product or use AI Scanner.</div>
+      ) : (
+        <motion.div 
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+          variants={containerVariants}
+        >
+          {filteredProducts.map(product => {
+            const isLowStock = product.stock <= 5;
+            return (
+              <motion.div
+                key={product.id}
+                variants={itemVariants}
+                className="p-5 rounded-3xl bg-[#27272A] border border-[#F59E0B]/20 shadow-lg flex flex-col justify-between hover:border-[#F59E0B] transition-all"
+              >
+                <div>
+                  <div className="flex justify-between items-start">
+                    <span className="text-[10px] text-[#FDE68A] bg-[#18181B] px-2.5 py-1 rounded-lg font-medium border border-[#F59E0B]/10">
+                      {product.category}
+                    </span>
+                    {isLowStock && (
+                      <span className="text-[10px] text-amber-300 bg-amber-500/20 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 border border-amber-500/30">
+                        <AlertTriangle className="w-3 h-3" /> Low Stock
+                      </span>
+                    )}
+                  </div>
 
-      {category === "NEW" && (
-        <input
-        type="text"
-        required
-        value={customCategory}
-        onChange={(e) => setCustomCategory(e.target.value)}
-        placeholder="Enter new category name"
-        className="mt-2 w-full px-3 py-2 border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-        />
+                  <h3 className="text-base font-bold text-[#FFFBEB] mt-3">{product.name}</h3>
+                  <p className="text-xs text-[#FDE68A]/70 mt-1">
+                    Available Stock: <strong className={isLowStock ? 'text-amber-400 font-extrabold' : 'text-[#FFFBEB]'}>{product.stock} units</strong>
+                  </p>
+                </div>
+
+                <div className="flex justify-between items-center mt-5 pt-3 border-t border-[#F59E0B]/10">
+                  <span className="text-lg font-extrabold text-[#FFFBEB]">₹{product.price}</span>
+                  <div className="flex items-center space-x-2">
+                    <button 
+                      onClick={() => handleOpenModal(product)}
+                      className="p-2 rounded-xl bg-[#18181B] text-[#FDE68A] hover:text-[#F59E0B] border border-[#F59E0B]/10 cursor-pointer"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteProduct(product.id)}
+                      className="p-2 rounded-xl bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white transition-all border border-rose-500/20 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </motion.div>
       )}
-      </div>
 
-      <div className="grid grid-cols-2 gap-3">
-      <div>
-      <label className="block text-xs font-medium text-slate-700 mb-1">
-      Price (₹ INR) *
-      </label>
-      <input
-      type="number"
-      step="0.01"
-      min="0"
-      required
-      value={price}
-      onChange={(e) => setPrice(e.target.value === "" ? "" : parseFloat(e.target.value))}
-      placeholder="79.99"
-      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-      />
-      </div>
+      {/* Modal */}
+      <AnimatePresence>
+        {isModalOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-50"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-[#18181B] border border-[#F59E0B]/40 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4"
+            >
+              <div className="flex justify-between items-center pb-3 border-b border-[#F59E0B]/20">
+                <h3 className="text-lg font-bold text-[#FFFBEB]">
+                  {editingProduct ? 'Edit Product' : 'Add New Product'}
+                </h3>
+                <button 
+                  onClick={() => setIsModalOpen(false)}
+                  className="p-1 rounded-xl text-[#FDE68A]/70 hover:bg-[#27272A] cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-      <div>
-      <label className="block text-xs font-medium text-slate-700 mb-1">
-      Stock Quantity *
-      </label>
-      <input
-      type="number"
-      min="0"
-      required
-      value={stock}
-      onChange={(e) => setStock(e.target.value === "" ? "" : parseInt(e.target.value, 10))}
-      placeholder="45"
-      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-      />
-      </div>
-      </div>
+              <form onSubmit={handleSaveProduct} className="space-y-4">
+                <div>
+                  <label className="text-xs text-[#FDE68A]/80 mb-1 block">Product Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#27272A] border border-[#F59E0B]/20 rounded-xl text-[#FFFBEB] focus:outline-none focus:border-[#F59E0B]"
+                    placeholder="e.g. Basmati Rice"
+                  />
+                </div>
 
-      <div className="pt-3 flex items-center justify-end gap-2">
-      <button
-      type="button"
-      onClick={handleCloseModal}
-      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg cursor-pointer"
-      >
-      Cancel
-      </button>
-      <button
-      type="submit"
-      disabled={saving}
-      className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow-xs disabled:opacity-60 cursor-pointer"
-      >
-      {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-      <span>{saving ? "Saving..." : editingProduct ? "Update Product" : "Create Product"}</span>
-      </button>
-      </div>
-      </form>
-      </div>
-      </div>
-    )}
+                <div>
+                  <label className="text-xs text-[#FDE68A]/80 mb-1 block">Category</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    className="w-full px-4 py-2.5 bg-[#27272A] border border-[#F59E0B]/20 rounded-xl text-[#FFFBEB] focus:outline-none focus:border-[#F59E0B]"
+                    placeholder="e.g. Grocery"
+                  />
+                </div>
 
-    {/* Delete Confirmation Modal */}
-    {productToDelete && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden">
-      <div className="p-6">
-      <div className="flex items-center gap-3">
-      <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-      <Trash2 className="w-5 h-5" />
-      </div>
-      <div>
-      <h3 className="text-sm font-bold text-slate-900">Delete Product</h3>
-      <p className="text-xs text-slate-500 mt-0.5">
-      This will permanently remove the item from SQLite inventory.
-      </p>
-      </div>
-      </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-[#FDE68A]/80 mb-1 block">Price (₹)</label>
+                    <input 
+                      type="number" 
+                      required
+                      value={formData.price}
+                      onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                      className="w-full px-4 py-2.5 bg-[#27272A] border border-[#F59E0B]/20 rounded-xl text-[#FFFBEB] focus:outline-none focus:border-[#F59E0B]"
+                      placeholder="150"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[#FDE68A]/80 mb-1 block">Stock Quantity</label>
+                    <input 
+                      type="number" 
+                      required
+                      value={formData.stock}
+                      onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
+                      className="w-full px-4 py-2.5 bg-[#27272A] border border-[#F59E0B]/20 rounded-xl text-[#FFFBEB] focus:outline-none focus:border-[#F59E0B]"
+                      placeholder="20"
+                    />
+                  </div>
+                </div>
 
-      <div className="mt-4 p-3.5 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-700">
-      <div className="font-bold text-slate-900 text-sm">{productToDelete.name}</div>
-      <div className="text-slate-500 mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
-      <span>Product ID: <strong className="text-slate-700">#{productToDelete.id}</strong></span>
-      <span>Category: <strong className="text-slate-700">{productToDelete.category}</strong></span>
-      <span>Price: <strong className="text-slate-700">₹{productToDelete.price.toFixed(2)}</strong></span>
-      <span>Current Stock: <strong className="text-slate-700">{productToDelete.stock}</strong></span>
-      </div>
-      </div>
+                <div className="pt-2">
+                  <button 
+                    type="submit"
+                    className="w-full py-3 bg-[#F59E0B] text-[#18181B] rounded-xl font-bold hover:bg-[#D97706] transition-all shadow-lg shadow-[#F59E0B]/20 cursor-pointer"
+                  >
+                    {editingProduct ? 'Update Product' : 'Save Product'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <div className="mt-6 flex items-center justify-end gap-2.5">
-      <button
-      type="button"
-      onClick={() => setProductToDelete(null)}
-      disabled={deleting}
-      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg transition-colors cursor-pointer"
-      >
-      Cancel
-      </button>
-      <button
-      type="button"
-      onClick={handleConfirmDelete}
-      disabled={deleting}
-      className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors disabled:opacity-60 cursor-pointer"
-      >
-      {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-      <span>{deleting ? "Deleting..." : "Confirm Delete"}</span>
-      </button>
-      </div>
-      </div>
-      </div>
-      </div>
-    )}
-    </div>
+      {/* Toast */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-6 right-6 bg-[#27272A] text-[#FFFBEB] px-4 py-3 rounded-2xl shadow-xl border border-[#F59E0B]/40 flex items-center space-x-2 z-50 text-xs font-semibold"
+          >
+            <CheckCircle2 className="w-4 h-4 text-[#F59E0B]" />
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+    </motion.div>
   );
 };
 

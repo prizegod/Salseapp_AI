@@ -1,420 +1,355 @@
-// The project does not currently provide React/Vite type declarations.
-// @ts-nocheck
-import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
-import {
-  Upload, FileText, AlertCircle, ZoomIn, ZoomOut,
-  RotateCw, RefreshCw, Image as ImageIcon, Smartphone, Monitor, Trash2, Database, CheckCircle
+import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence, Variants } from 'framer-motion';
+import { 
+  ArrowLeft, 
+  Upload, 
+  Camera, 
+  Scan, 
+  CheckCircle2, 
+  FileText, 
+  Sparkles,
+  PlusCircle,
+  AlertCircle,
+  RefreshCcw
 } from 'lucide-react';
-import { recordSale } from '../services/api'; // 👈 1. Centralized API helper-ஐ இறக்குமதி செய்கிறோம்
+import { useNavigate } from 'react-router-dom';
+import { scanDocument, createProduct } from '../services/api';
 
-interface LineItem {
+interface ScannedItem {
+  id?: number;
   name: string;
+  qty: number;
   price: number;
 }
 
-interface ReceiptData {
-  items: LineItem[];
-}
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.1 }
+  }
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 15 },
+  visible: { 
+    opacity: 1, 
+    y: 0, 
+    transition: { type: 'spring' as const, stiffness: 260, damping: 20 }
+  }
+};
 
 export const DocScanner: React.FC = () => {
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ReceiptData | null>(null);
-
-  // 🎯 Database Processing States
-  const [saving, setSaving] = useState<boolean>(false);
-  const [dbSuccess, setDbSuccess] = useState<boolean>(false);
-
-  const [zoom, setZoom] = useState<number>(1);
-  const [rotation, setRotation] = useState<number>(0);
-  const [copied, setCopied] = useState<boolean>(false);
-
+  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [rawFile, setRawFile] = useState<File | null>(null); // 🎯 ஒரிஜினல் ஃபைலைச் சேமிக்க
+  const [isScanning, setIsScanning] = useState(false);
+  const [scannedItems, setScannedItems] = useState<ScannedItem[]>([]);
+  const [vendorName, setVendorName] = useState('');
+  const [totalAmount, setTotalAmount] = useState(0);
+  const [isSaved, setIsSaved] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (previewUrl && previewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(previewUrl);
-      }
-    };
-  }, [previewUrl]);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      setError("கோப்பின் அளவு 10MB-க்கு மேல் இருக்கக்கூடாது.");
-      return;
+  // 1. File Selection (படம் தேர்வு செய்தல் - உடனே ஸ்கேன் ஆகாது)
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
     }
 
-    processSelectedFile(selectedFile);
-  };
-
-  const processSelectedFile = (selectedFile: File) => {
-    setError(null);
-    setResult(null);
-    setDbSuccess(false);
-    setFile(selectedFile);
-    setZoom(1);
-    setRotation(0);
-    setPreviewUrl(URL.createObjectURL(selectedFile));
-  };
-
-  const handleResetAll = () => {
-    setFile(null);
-    setPreviewUrl(null);
-    setResult(null);
-    setError(null);
-    setDbSuccess(false);
-    setZoom(1);
-    setRotation(0);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const res = reader.result as string;
-        resolve(res.split(',')[1]);
-      };
-      reader.onerror = (err) => reject(err);
-    });
-  };
-
-  // 🎯 Gemini API Scan Function
-  const scanSalesInvoice = async () => {
+    const file = event.target.files?.[0];
     if (!file) return;
 
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) {
-      setError("API Key கிடைக்கவில்லை. .env ஃபைலில் VITE_GEMINI_API_KEY உள்ளதா எனச் சரிபார்க்கவும்.");
-      return;
-    }
+    setRawFile(file);
+    const imageUrl = URL.createObjectURL(file);
+    setSelectedImage(imageUrl);
+    setScannedItems([]);
+    setErrorMessage(null);
+    setIsSaved(false);
 
-    setLoading(true);
-    setError(null);
-    setDbSuccess(false);
-
-    try {
-      const base64Data = await fileToBase64(file);
-      const ai = new GoogleGenAI({ apiKey });
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType: file.type || 'image/png', data: base64Data } },
-              { text: "Extract only sold items and prices." }
-            ]
-          }
-        ],
-        config: {
-          systemInstruction: `You are an expert handwritten receipt OCR scanner for mobile repair and hardware shops.
-          Extract ONLY two pieces of information for each line item on the receipt:
-          1. Item Name (name) - Correct common handwriting shorthand for mobile spare parts (e.g., T/M -> Temper Glass, B/C -> Back Cover, Simtray -> Sim Tray).
-          2. Total Price (price) as a numeric value.
-          Do not extract total summary lines, dates, shop names, or mobile numbers as line items.`,
-          temperature: 0,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              items: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING, description: "Name of the item" },
-                    price: { type: Type.NUMBER, description: "Total price of the item" }
-                  },
-                  required: ["name", "price"]
-                }
-              }
-            },
-            required: ["items"]
-          }
-        }
-      });
-
-      if (response.text) {
-        const parsedData = JSON.parse(response.text);
-        setResult(parsedData);
-      } else {
-        throw new Error("தரவை எடுக்க முடியவில்லை.");
-      }
-
-    } catch (err: any) {
-      if (err.message?.includes('Failed to fetch') || err.name === 'TypeError') {
-        setError("இணைய இணைப்பு தொடர்பில் இல்லை அல்லது API தடுக்கப்பட்டுள்ளது.");
-      } else {
-        setError(err.message || "பிழை ஏற்பட்டது.");
-      }
-    } finally {
-      setLoading(false);
+    if (event.target) {
+      event.target.value = '';
     }
   };
 
-  // 🎯 2. Execute / Save to Database Function (recordSale API பயன்படுத்தித் திருத்தப்பட்டது)
-  const handleExecuteSaveToDB = async () => {
-    if (!result || !result.items || result.items.length === 0) return;
+  // 🎯 2. Scan Button Action (பக்கம் ரீப்ரெஷ் ஆகாமல் பாதுகாப்பாக ஏபிஇ கோரிக்கை அனுப்புதல்)
+    const handleTriggerScan = async (e?: React.MouseEvent) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+  
+      if (!rawFile) {
+        setErrorMessage('Please select an image first.');
+        return;
+      }
+  
+      setIsScanning(true);
+      setErrorMessage(null);
+  
+      try {
+        // 🔒 C# Backend Proxy API Call via Axios
+        const result: any = await scanDocument(rawFile);
+  
+        if (result) {
+          setVendorName(result.merchantName || result.vendorName || 'General Store');
+          setTotalAmount(result.totalAmount || 0);
+          
+          const formattedItems: ScannedItem[] = (result.items || []).map((item: any, idx: number) => ({
+            id: idx + 1,
+            name: item.description || item.name || 'Scanned Item',
+            qty: item.quantity || item.qty || 1,
+            price: item.unitPrice || item.price || 0,
+          }));
+  
+          setScannedItems(formattedItems);
+        } else {
+          setErrorMessage('No data returned from backend scanner.');
+        }
+      } catch (err: any) {
+        console.error('DocScanner Error:', err);
+        setErrorMessage(
+          err.response?.data?.message || 'Failed to scan document via server. Please check backend connection.'
+        );
+      } finally {
+        setIsScanning(false);
+      }
+    };
 
-    setSaving(true);
-    setError(null);
+  // 🎯 3. Retry / Change Image Button Action
+  const handleRetry = () => {
+    setScannedItems([]);
+    setErrorMessage(null);
+    fileInputRef.current?.click();
+  };
 
+  // 4. Save to Inventory
+  const handleSaveToInventory = async (e: React.MouseEvent) => {
+    e.preventDefault();
     try {
-      // 💡 api.ts-ல் உள்ள recordSale வழியாக C# API-க்குத் தேவையான DTO வடிவமைப்பில் அனுப்புகிறோம்
-      const payload = {
-        storeId: 1,
-        items: result.items.map(item => ({
-          productId: 1,
+      setIsSaved(true);
+      
+      for (const item of scannedItems) {
+        await createProduct({
           name: item.name,
-          price: Number(item.price || 0),
-                                         quantity: 1
-        })),
-        totalAmount: calculatedTotal
-      };
+          category: 'Scanned Invoice',
+          price: item.price,
+          stock: item.qty,
+        });
+      }
 
-      await recordSale(payload); // 👈 Axios helper API மூலம் C# Backend-க்கு அனுப்பப்படுகிறது
-
-      setDbSuccess(true);
-    } catch (err: any) {
-      setError(err.response?.data?.message || err.message || "Database Connection Failed!");
-    } finally {
-      setSaving(false);
+      setTimeout(() => {
+        setIsSaved(false);
+        setSelectedImage(null);
+        setRawFile(null);
+        setScannedItems([]);
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to save scanned items:', err);
     }
   };
-
-  const generateTechInvoiceSample = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 900;
-    canvas.height = 1100;
-    const ctx = canvas.getContext('2d');
-
-    if (ctx) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      ctx.fillStyle = '#1e293b';
-      ctx.font = 'bold 30px sans-serif';
-      ctx.fillText('NEXUS TECH & MOBILE HUB', 60, 80);
-
-      ctx.font = '16px sans-serif';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('Sales & Service Invoice', 60, 110);
-      ctx.fillText('Inv No: INV-2026-8841', 600, 80);
-      ctx.fillText('Date: 2026-03-19', 600, 110);
-
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(60, 140);
-      ctx.lineTo(840, 140);
-      ctx.stroke();
-
-      ctx.fillStyle = '#0f172a';
-      ctx.font = 'bold 18px monospace';
-      ctx.fillText('ITEM DESCRIPTION                             PRICE', 60, 180);
-
-      ctx.font = '16px monospace';
-      ctx.fillStyle = '#334155';
-      ctx.fillText('1. Kingston 16GB DDR4 RAM 3200MHz        ₹3,200', 60, 230);
-      ctx.fillText('2. Samsung Galaxy S23 Back Cover           ₹900', 60, 270);
-      ctx.fillText('3. 11D Tempered Glass Guard                ₹250', 60, 310);
-      ctx.fillText('4. MS Office 2024 Digital Key            ₹2,499', 60, 350);
-      ctx.fillText('5. Type-C Fast Charging Cable 65W          ₹450', 60, 390);
-
-      ctx.beginPath();
-      ctx.moveTo(60, 430);
-      ctx.lineTo(840, 430);
-      ctx.stroke();
-
-      canvas.toBlob((blob) => {
-        if (blob) {
-          processSelectedFile(new File([blob], 'tech-sales-invoice.png', { type: 'image/png' }));
-        }
-      });
-    }
-  };
-
-  const calculatedTotal = result?.items?.reduce((acc, item) => acc + (item.price || 0), 0) || 0;
 
   return (
-    <div className="max-w-6xl mx-auto p-6 bg-slate-50 min-h-screen">
-    <header className="mb-8 border-b pb-4">
-    <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-    <Monitor className="text-blue-600" /> Tech & Mobile Sales Invoice Scanner
-    </h1>
-    <p className="text-slate-600 text-sm mt-1">
-    விற்பனை ரசீதுகளிலிருந்து பொருள் மற்றும் விலையை பிரித்தெடுக்கும் AI ஸ்கேனர்
-    </p>
-    </header>
-
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-    {/* Upload Column */}
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-    <div className="flex justify-between items-center mb-4">
-    <h2 className="text-md font-semibold text-slate-700">1. பில் / ரசீதை பதிவேற்றவும்</h2>
-    <button
-    onClick={generateTechInvoiceSample}
-    className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg font-medium hover:bg-blue-100 transition"
+    <motion.div 
+      className="min-h-screen bg-[#18181B] p-4 md:p-8 text-[#FFFBEB] pb-32 max-w-7xl mx-auto"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
     >
-    + 1-Click Tech Invoice Test
-    </button>
-    </div>
-
-    {!previewUrl ? (
-      <div
-      onClick={() => fileInputRef.current?.click()}
-      className="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-500 hover:bg-slate-50 transition"
-      >
-      <Upload className="mx-auto h-12 w-12 text-slate-400 mb-3" />
-      <p className="text-slate-600 font-medium">படம் அல்லது PDF-ஐ பதிவேற்றவும்</p>
-      <p className="text-xs text-slate-400 mt-1">Hardware / Mobile Invoice (Max 10MB)</p>
-      <input ref={fileInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
-      </div>
-    ) : (
-      <div>
-      <div className="flex items-center justify-between bg-slate-100 p-2 rounded-lg mb-3">
-      <span className="text-xs font-medium truncate max-w-[150px]">{file?.name}</span>
-      <div className="flex items-center gap-2">
-      <button onClick={() => setZoom(p => Math.min(p + 0.2, 3))} className="p-1 hover:bg-white rounded" title="Zoom In"><ZoomIn size={16} /></button>
-      <button onClick={() => setZoom(p => Math.max(p - 0.2, 0.6))} className="p-1 hover:bg-white rounded" title="Zoom Out"><ZoomOut size={16} /></button>
-      <button onClick={() => setRotation(p => (p + 90) % 360)} className="p-1 hover:bg-white rounded" title="Rotate"><RotateCw size={16} /></button>
-      <button onClick={handleResetAll} className="p-1 hover:bg-red-50 text-red-500 rounded" title="Remove File"><Trash2 size={16} /></button>
-      </div>
-      </div>
-
-      <div className="relative h-80 bg-slate-900 rounded-lg overflow-hidden flex items-center justify-center">
-      {file?.type === 'application/pdf' ? (
-        <div className="text-center text-white">
-        <FileText size={48} className="mx-auto mb-2 text-blue-400" />
-        <p className="text-sm">PDF Invoice Loaded</p>
+      {/* 🚀 Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center space-x-3">
+          <motion.button 
+            whileTap={{ scale: 0.9 }}
+            onClick={() => navigate('/dashboard')}
+            className="p-2.5 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 text-[#FDE68A] cursor-pointer"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </motion.button>
+          <div>
+            <h1 className="text-2xl font-bold text-[#FFFBEB] flex items-center gap-2">
+              AI Bill Scanner <Sparkles className="w-5 h-5 text-[#F59E0B]" />
+            </h1>
+            <p className="text-xs text-[#FDE68A]/70">Scan receipts with Scan & Retry controls</p>
+          </div>
         </div>
-      ) : (
-        <img
-        src={previewUrl}
-        alt="Invoice Preview"
-        className="max-h-full transition-transform duration-200 object-contain"
-        style={{ transform: `scale(${zoom}) rotate(${rotation}deg)` }}
-        />
-      )}
       </div>
 
-      <div className="flex gap-2 mt-4">
-      <button
-      onClick={scanSalesInvoice}
-      disabled={loading}
-      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 disabled:bg-slate-400 cursor-pointer"
-      >
-      {loading ? <RefreshCw className="animate-spin" size={18} /> : <ImageIcon size={18} />}
-      <span>{loading ? "ஸ்கேன் செய்யப்படுகிறது..." : result ? "Re-Scan Invoice" : "Scan Sales Items"}</span>
-      </button>
+      {/* 🖥️ Main Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* 📸 Left Column: Image Preview & Scan/Retry Controls */}
+        <motion.div variants={itemVariants} className="space-y-4">
+          <div className="relative border-2 border-dashed border-[#F59E0B]/30 rounded-3xl p-4 bg-[#27272A] text-center min-h-[320px] flex flex-col justify-center items-center overflow-hidden shadow-lg">
+            
+            {selectedImage ? (
+              <div className="relative w-full h-full max-h-[380px] rounded-2xl overflow-hidden flex justify-center items-center bg-[#18181B]">
+                <img src={selectedImage} alt="Receipt" className="max-h-full object-contain rounded-xl" />
 
-      <button
-      onClick={handleResetAll}
-      className="px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium text-xs transition border border-slate-300"
-      >
-      Clear / New
-      </button>
-      </div>
-      </div>
-    )}
+                {/* ⚡ Scanning Animation */}
+                {isScanning && (
+                  <motion.div 
+                    initial={{ top: '0%' }}
+                    animate={{ top: '100%' }}
+                    transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-[#F59E0B] to-transparent shadow-[0_0_15px_#F59E0B]"
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3 p-6">
+                <div className="p-4 rounded-full bg-[#18181B] text-[#F59E0B] w-16 h-16 mx-auto flex items-center justify-center border border-[#F59E0B]/20">
+                  <Camera className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-[#FFFBEB]">Upload or Capture Bill</h3>
+                  <p className="text-xs text-[#FDE68A]/60 mt-1">Select an invoice to enable Scan & Retry</p>
+                </div>
 
-    {error && (
-      <div className="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center gap-2">
-      <AlertCircle size={16} />
-      <span>{error}</span>
-      </div>
-    )}
-    </div>
+                <button 
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-5 py-2.5 bg-[#F59E0B] text-[#18181B] text-xs font-bold rounded-2xl shadow-lg inline-flex items-center gap-2 hover:bg-[#D97706] transition-all mt-2 cursor-pointer"
+                >
+                  <Upload className="w-4 h-4" /> Select Bill Image
+                </button>
 
-    {/* Results Column */}
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
-    <div>
-    <div className="flex justify-between items-center mb-4">
-    <h2 className="text-md font-semibold text-slate-700">2. Extracted Items</h2>
-    {result && (
-      <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(result, null, 2)); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="text-xs bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded text-slate-600 font-medium">
-      {copied ? "Copied!" : "Copy JSON"}
-      </button>
-    )}
-    </div>
+                <input 
+                  ref={fileInputRef}
+                  type="file" 
+                  accept="image/*" 
+                  onChange={handleFileChange} 
+                  className="hidden" 
+                />
+              </div>
+            )}
+          </div>
 
-    {!result && !loading && (
-      <div className="h-80 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center text-slate-400">
-      <Smartphone size={40} className="mb-2 stroke-1 text-slate-300" />
-      <p className="text-sm">விற்பனைப் பட்டியல் விவரங்கள் இங்கே தோன்றும்</p>
-      </div>
-    )}
+          {/* 🎯 Scan & Retry Action Buttons */}
+          {selectedImage && (
+            <div className="flex gap-3">
+              {!isScanning && (
+                <button 
+                  type="button"
+                  onClick={handleTriggerScan}
+                  className="w-full py-3 bg-[#F59E0B] text-[#18181B] text-xs font-bold rounded-2xl flex items-center justify-center gap-2 shadow-lg hover:bg-[#D97706] transition-all cursor-pointer"
+                >
+                  <Scan className="w-4 h-4" /> Scan Document
+                </button>
+              )}
 
-    {result && (
-      <div className="space-y-4">
-      <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 flex justify-between items-center">
-      <p className="text-xs text-blue-600 font-medium">கணக்கிடப்பட்ட மொத்தத் தொகை</p>
-      <p className="text-xl font-bold text-blue-700">₹{calculatedTotal.toLocaleString()}</p>
+              {/* Retry / Change Image Button */}
+              <button 
+                type="button"
+                onClick={handleRetry}
+                disabled={isScanning}
+                className="w-full py-3 bg-[#27272A] border border-[#F59E0B]/20 text-[#FDE68A] text-xs font-semibold rounded-2xl flex items-center justify-center gap-2 hover:border-[#F59E0B] transition-all cursor-pointer"
+              >
+                <RefreshCcw className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} /> 
+                {isScanning ? 'Scanning...' : 'Retry / Change Image'}
+              </button>
+            </div>
+          )}
+        </motion.div>
+
+        {/* 📑 Right Column: Extracted Results */}
+        <motion.div variants={itemVariants} className="space-y-4">
+          <div className="bg-[#27272A] border border-[#F59E0B]/20 rounded-3xl p-5 min-h-[320px] flex flex-col justify-between shadow-xl">
+            
+            <div>
+              <div className="flex justify-between items-center pb-3 border-b border-[#F59E0B]/20 mb-4">
+                <h2 className="text-lg font-bold text-[#FFFBEB] flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-[#F59E0B]" /> Extracted Data
+                </h2>
+                {isScanning && (
+                  <span className="text-xs text-[#F59E0B] font-semibold animate-pulse flex items-center gap-1">
+                    <Scan className="w-4 h-4 animate-spin" /> Processing...
+                  </span>
+                )}
+              </div>
+
+              {errorMessage && (
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-300 text-xs flex items-center gap-2 mb-3">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              {!selectedImage && !isScanning && (
+                <div className="text-center py-12 text-[#FDE68A]/50 space-y-2">
+                  <AlertCircle className="w-10 h-10 mx-auto opacity-40 text-[#F59E0B]" />
+                  <p className="text-xs">Upload an image and click 'Scan Document' to view details.</p>
+                </div>
+              )}
+
+              {scannedItems.length > 0 && (
+                <div className="space-y-3">
+                  <div className="bg-[#18181B] p-3 rounded-2xl border border-[#F59E0B]/20 flex justify-between text-xs">
+                    <span className="text-[#FDE68A]/80">Vendor: <strong className="text-[#FFFBEB]">{vendorName}</strong></span>
+                    <span className="text-[#FDE68A]/80">Total: <strong className="text-[#F59E0B]">₹{totalAmount}</strong></span>
+                  </div>
+
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {scannedItems.map((item, index) => (
+                      <div 
+                        key={item.id || index} 
+                        className="p-3 bg-[#18181B] border border-[#F59E0B]/10 rounded-xl flex justify-between items-center text-xs"
+                      >
+                        <div>
+                          <p className="font-semibold text-[#FFFBEB]">{item.name}</p>
+                          <p className="text-[10px] text-[#FDE68A]/60">Qty: {item.qty} × ₹{item.price}</p>
+                        </div>
+                        <span className="font-bold text-[#F59E0B]">₹{item.qty * item.price}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {scannedItems.length > 0 && (
+              <div className="pt-4 border-t border-[#F59E0B]/20 mt-4">
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  onClick={handleSaveToInventory}
+                  className="w-full py-3.5 bg-gradient-to-r from-[#F59E0B] to-[#D97706] text-[#18181B] rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg shadow-[#F59E0B]/20 cursor-pointer"
+                >
+                  <PlusCircle className="w-5 h-5" />
+                  <span>Add Scanned Items to Products</span>
+                </motion.button>
+              </div>
+            )}
+
+          </div>
+        </motion.div>
+
       </div>
 
-      <div>
-      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">விற்பனை செய்யப்பட்ட பொருட்கள் ({result.items?.length || 0})</h3>
-      <div className="border border-slate-200 rounded-lg overflow-hidden max-h-52 overflow-y-auto">
-      <table className="w-full text-left text-xs">
-      <thead className="bg-slate-100 text-slate-600 font-medium sticky top-0">
-      <tr>
-      <th className="p-2.5">பொருள் பெயர்</th>
-      <th className="p-2.5 text-right">விலை</th>
-      </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-200">
-      {result.items?.map((item, idx) => (
-        <tr key={idx} className="hover:bg-slate-50">
-        <td className="p-2.5 font-medium text-slate-800">{item.name}</td>
-        <td className="p-2.5 text-right font-semibold text-slate-800">₹{item.price?.toLocaleString()}</td>
-        </tr>
-      ))}
-      </tbody>
-      </table>
-      </div>
-      </div>
-      </div>
-    )}
-    </div>
+      {/* 🎉 Success Modal */}
+      <AnimatePresence>
+        {isSaved && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-50"
+          >
+            <motion.div 
+              initial={{ scale: 0.8, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.8, y: 20 }}
+              className="bg-[#18181B] border border-[#F59E0B]/40 rounded-3xl p-6 text-center space-y-3 max-w-sm w-full shadow-2xl"
+            >
+              <CheckCircle2 className="w-14 h-14 text-[#F59E0B] mx-auto animate-bounce" />
+              <h3 className="text-xl font-bold text-[#FFFBEB]">Inventory Updated!</h3>
+              <p className="text-xs text-[#FDE68A]/70">Scanned bill items added successfully into your store database.</p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-    {/* 🎯 EXECUTE & SAVE TO DATABASE BUTTON */}
-    {result && (
-      <div className="mt-6 border-t pt-4">
-      {dbSuccess && (
-        <div className="mb-3 p-2 bg-emerald-50 text-emerald-700 rounded-lg text-xs flex items-center justify-center gap-1.5 font-medium">
-        <CheckCircle size={16} />
-        <span>டேட்டாபேஸில் வெற்றிகரமாகச் சேமிக்கப்பட்டது!</span>
-        </div>
-      )}
-      <button
-      onClick={handleExecuteSaveToDB}
-      disabled={saving || dbSuccess}
-      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 shadow-sm cursor-pointer text-sm"
-      >
-      {saving ? (
-        <RefreshCw className="animate-spin" size={18} />
-      ) : (
-        <Database size={18} />
-      )}
-      <span>{saving ? "சேமிக்கப்படுகிறது..." : dbSuccess ? "Saved to Database" : "Execute & Save to Database"}</span>
-      </button>
-      </div>
-    )}
-    </div>
-    </div>
-    </div>
+    </motion.div>
   );
 };
 

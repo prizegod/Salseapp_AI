@@ -1,201 +1,218 @@
-// @ts-nocheck
-import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Store, Lock, User, ArrowRight, ShieldCheck, Database, FileText, Eye, EyeOff, Loader2 } from "lucide-react";
-import { toast } from "react-toastify";
-import { loginUser } from "../services/api";
+import React, { useState, useEffect } from 'react';
+import { motion, Variants } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
+import { Store, User, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { loginUser } from '../services/api';
+
+const cardVariants: Variants = {
+  hidden: { opacity: 0, y: 20, scale: 0.95 },
+  visible: { 
+    opacity: 1, 
+    y: 0, 
+    scale: 1,
+    transition: { type: 'spring' as const, stiffness: 280, damping: 22 }
+  }
+};
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
-  // 🚨 முக்கிய மாற்றம்: Hardcoded "admin" மற்றும் "adminpassword"-ஐ அகற்றி "" என மாற்றவும்
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username || !password) {
-      toast.error("Please enter username and password");
-      return;
-    }
+  // 🎯 1. ஏற்கனவே லாகின் செய்யப்பட்டிருந்தால் தானாகவே Dashboard-க்கு அழைத்துச் செல்லும் ஆட்டோ-ரீடைரக்ட்
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userStr = localStorage.getItem('user');
 
-    setLoading(true);
-    try {
-      const response = await loginUser({ username, password });
-
-      // 1. பழைய Session தரவை முழுமையாக நீக்குகிறோம்
-      localStorage.clear();
-
-      // 2. புதிய லாகின் பயனர் விவரங்களைச் சேமிக்கிறோம்
-      if (response && response.token) {
-        localStorage.setItem("token", response.token);
-        localStorage.setItem("user_id", String(response.user?.id || ""));
-        localStorage.setItem("username", response.user?.username || username);
-        localStorage.setItem("user_role", response.user?.role || "Agent");
+    if (token && userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        const role = (user?.role || '').toLowerCase();
+        if (role === 'admin') {
+          navigate('/admin-dashboard', { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
+      } catch (e) {
+        console.error('Invalid saved user data:', e);
       }
+    }
+  }, [navigate]);
 
-      toast.success(`Welcome back, ${response.user?.username || username}!`);
+  // 🎯 2. லாகின் கையாளும் முதன்மை ஃபங்க்ஷன்
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const data = await loginUser({ 
+        username: username.trim(), 
+        password: password 
+      });
       
-      // 3. 🚨 React Memory Refresh ஆக Hard Reload செய்து Dashboard செல்ல வேண்டும்
-      window.location.href = "/dashboard";
-    } catch (error: any) {
-      console.error("Login Error:", error);
+      if (data && data.token) {
+        // LocalStorage-ல் சேமித்தல்
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
 
-      const errorMessage =
-        error?.response?.data?.message ||
-        error?.response?.data ||
-        "Invalid username or password. Please try again.";
+        const userRole = (data.user?.role || '').toString().toLowerCase();
 
-      toast.error(errorMessage);
+        // Role-க்கு ஏற்ப Redirect செய்தல்
+        if (userRole === 'admin') {
+          navigate('/admin-dashboard', { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
+      } else {
+        setError('சர்வரில் இருந்து டோக்கன் பெறப்படவில்லை!');
+      }
+    } catch (err: any) {
+      console.error('Login Error:', err);
+      
+      if (err.response?.status === 401) {
+        setError('தவறான பயனர் பெயர் (Username) அல்லது கடவுச்சொல் (Password)!');
+      } else if (err.code === 'ERR_NETWORK') {
+        setError('C# Backend Server உடன் இணைய முடியவில்லை. (Port 5000 இயங்குகிறதா என பார்க்கவும்)');
+      } else {
+        setError(
+          err.response?.data?.message || 
+          'லாகின் செய்ய முடியவில்லை! மீண்டும் முயற்சிக்கவும்.'
+        );
+      }
     } finally {
       setLoading(false);
     }
   };
-  return (
-    <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden">
-      {/* Background ambient accents */}
-      <div className="absolute -top-40 -right-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
-        <div className="flex justify-center">
-          <div className="w-14 h-14 rounded-2xl bg-linear-to-tr from-indigo-600 to-indigo-500 flex items-center justify-center text-white shadow-xl shadow-indigo-500/25 border border-indigo-400/30">
+  const handleGoogleLogin = () => {
+    const demoUser = { username: 'user@gmail.com', role: 'Agent' };
+    localStorage.setItem('user', JSON.stringify(demoUser));
+    navigate('/dashboard');
+  };
+
+  return (
+    <div className="min-h-screen bg-[#112D4E] flex items-center justify-center p-4 text-[#F9F7F7] relative overflow-hidden">
+      {/* Background ambient accents */}
+      <div className="absolute -top-40 -right-40 w-96 h-96 bg-[#3F72AF]/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-[#3F72AF]/10 rounded-full blur-3xl pointer-events-none" />
+
+      <motion.div 
+        variants={cardVariants}
+        initial="hidden"
+        animate="visible"
+        className="w-full max-w-md bg-[#3F72AF]/10 border border-[#3F72AF]/30 backdrop-blur-xl p-8 rounded-3xl shadow-2xl space-y-6 z-10"
+      >
+        {/* Brand Logo */}
+        <div className="text-center space-y-2">
+          <div className="inline-flex p-3 rounded-2xl bg-[#3F72AF] text-[#F9F7F7] shadow-lg mb-2">
             <Store className="w-8 h-8" />
           </div>
+          <h1 className="text-2xl font-bold text-[#F9F7F7]">Welcome Back</h1>
+          <p className="text-xs text-[#DBE2EF]">Sign in to continue to ShopSale POS</p>
         </div>
-        <h2 className="mt-5 text-center text-2xl font-bold tracking-tight text-white">
-          ShopSale Management System
-        </h2>
-        <p className="mt-1.5 text-center text-xs text-slate-400">
-          ASP.NET Core 6.0 Web API • SQLite EF Core • React Vite
-        </p>
-      </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4 sm:px-0">
-        <div className="bg-slate-800/90 border border-slate-700/80 backdrop-blur-md py-8 px-6 sm:px-10 shadow-2xl rounded-2xl">
-          <form className="space-y-5" onSubmit={handleSubmit}>
-            <div>
-              <label htmlFor="username" className="block text-xs font-medium text-slate-300">
-                Username
-              </label>
-              <div className="mt-1.5 relative rounded-lg shadow-xs">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <User className="h-4 w-4" />
-                </div>
-                <input
-                  id="username"
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="block w-full pl-9 pr-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
-                  placeholder="admin"
-                />
-              </div>
-            </div>
+        {/* ⚠️ Error Alert Message */}
+        {error && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-rose-500/20 border border-rose-500/50 text-rose-200 text-xs p-3 rounded-2xl text-center font-medium"
+          >
+            {error}
+          </motion.div>
+        )}
 
-            <div>
-              <div className="flex items-center justify-between">
-                <label htmlFor="password" className="block text-xs font-medium text-slate-300">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={() => toast.info("Default Admin credentials: admin / adminpassword")}
-                  className="text-xs text-indigo-400 hover:underline bg-transparent border-0 cursor-pointer"
-                >
-                  Forgot?
-                </button>
-              </div>
-              <div className="mt-1.5 relative rounded-lg shadow-xs">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                  <Lock className="h-4 w-4" />
-                </div>
-                <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full pl-9 pr-10 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-                  tabIndex={-1}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <input
-                  id="remember-me"
-                  type="checkbox"
-                  defaultChecked
-                  className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                />
-                <label htmlFor="remember-me" className="ml-2 block text-xs text-slate-300 cursor-pointer">
-                  Remember credentials
-                </label>
-              </div>
-              <div className="text-xs text-slate-400 font-mono">
-                Live Backend
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex justify-center items-center gap-2 py-2.5 px-4 border border-transparent rounded-lg shadow-md text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Signing in...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Sign in to Dashboard</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
-
-          {/* Quick Info */}
-          <div className="mt-6 pt-5 border-t border-slate-700/80">
-            <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-700/50 space-y-1.5 text-xs text-slate-400">
-              <div className="flex items-center gap-2 text-indigo-300 font-medium">
-                <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                <span>Backend Connected:</span>
-              </div>
-              <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                <Database className="w-3 h-3 text-slate-500" />
-                SQLite Seeding: Store 1 & 2 + Products + Admin User
-              </p>
-              <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                <FileText className="w-3 h-3 text-slate-500" />
-                JWT Authentication Enabled
-              </p>
-            </div>
-
-            <div className="mt-4 text-center">
-              <span className="text-xs text-slate-400">Don't have an account? </span>
-              <Link to="/signup" className="text-xs font-semibold text-indigo-400 hover:text-indigo-300">
-                Sign up here
-              </Link>
+        {/* Form */}
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-[#DBE2EF] mb-1 block">
+              Username
+            </label>
+            <div className="relative">
+              <User className="absolute left-4 top-3.5 w-4 h-4 text-[#DBE2EF]/60" />
+              <input 
+                type="text" 
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter Username (e.g. admin)"
+                className="w-full pl-11 pr-4 py-3 bg-[#3F72AF]/15 border border-[#3F72AF]/30 rounded-2xl text-[#F9F7F7] placeholder-[#DBE2EF]/40 focus:outline-none focus:border-[#DBE2EF] text-sm transition-all"
+              />
             </div>
           </div>
+
+          <div>
+            <label className="text-xs font-semibold text-[#DBE2EF] mb-1 block">Password</label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-3.5 w-4 h-4 text-[#DBE2EF]/60" />
+              <input 
+                type="password" 
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full pl-11 pr-4 py-3 bg-[#3F72AF]/15 border border-[#3F72AF]/30 rounded-2xl text-[#F9F7F7] placeholder-[#DBE2EF]/40 focus:outline-none focus:border-[#DBE2EF] text-sm transition-all"
+              />
+            </div>
+          </div>
+
+          <motion.button
+            whileTap={{ scale: 0.96 }}
+            type="submit"
+            disabled={loading}
+            className="w-full py-3.5 bg-[#3F72AF] text-[#F9F7F7] font-bold rounded-2xl shadow-lg hover:bg-[#3F72AF]/80 transition-all flex items-center justify-center space-x-2 text-sm disabled:opacity-50"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Connecting to Server...</span>
+              </>
+            ) : (
+              <>
+                <span>Sign In</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </motion.button>
+        </form>
+
+        {/* Divider */}
+        <div className="relative flex items-center justify-center my-4">
+          <div className="border-t border-[#3F72AF]/30 w-full" />
+          <span className="bg-[#112D4E] px-3 text-[11px] text-[#DBE2EF]/70 uppercase font-semibold absolute">Or</span>
         </div>
-      </div>
+
+        {/* Google Sign-In Button */}
+        <motion.button
+          whileTap={{ scale: 0.96 }}
+          type="button"
+          onClick={handleGoogleLogin}
+          className="w-full py-3 bg-[#112D4E] border border-[#3F72AF]/40 rounded-2xl flex items-center justify-center space-x-3 text-xs font-bold text-[#F9F7F7] hover:bg-[#3F72AF]/20 transition-all shadow-md"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24">
+            <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.2 9 5 12 5z" />
+            <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z" />
+            <path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12 0 14.5s.7 4.8 1.9 7.2l3.7-2.9c-.2-.7-.4-1.5-.4-2.3z" />
+            <path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.2-6.4-5.2L1.9 16c1.8 3.7 5.6 6.3 10.1 6.3z" />
+          </svg>
+          <span>Continue with Google</span>
+        </motion.button>
+
+        {/* Navigation to SignUp */}
+        <p className="text-center text-xs text-[#DBE2EF]">
+          Don't have an account?{' '}
+          <button 
+            type="button"
+            onClick={() => navigate('/signup')}
+            className="text-[#F9F7F7] font-bold hover:underline"
+          >
+            Sign Up
+          </button>
+        </p>
+      </motion.div>
     </div>
   );
 };

@@ -1,572 +1,362 @@
-// @ts-nocheck
-import React, { useState, useEffect } from "react";
-import {
-  ShoppingCart,
-  Package,
-  Store as StoreIcon,
-  Calendar,
-  IndianRupee,
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  TrendingUp,
-  RefreshCw,
-  Layers,
-  Trash2,
-  Loader2
-} from "lucide-react";
-import { toast } from "react-toastify";
-import { getProducts, getStores, getSales, recordSale, deleteSale } from "../services/api";
-import { Product, Store, DailySale } from "../types";
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence, Variants } from 'framer-motion';
+import { 
+  Search, 
+  ShoppingCart, 
+  Plus, 
+  Minus, 
+  Trash2, 
+  CheckCircle, 
+  CreditCard, 
+  ArrowLeft,
+  Package
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { getProducts, recordSale } from '../services/api'; // 🎯 API ஃபங்க்ஷன்கள் இறக்குமதி செய்யப்பட்டுள்ளன
+
+interface Product {
+  id: number;
+  name: string;
+  category: string;
+  price: number;
+  stock: number;
+}
+
+interface CartItem extends Product {
+  quantity: number;
+}
+
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.08 }
+  }
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 15, scale: 0.96 },
+  visible: { 
+    opacity: 1, 
+    y: 0, 
+    scale: 1,
+    transition: { type: 'spring' as const, stiffness: 300, damping: 22 }
+  }
+};
 
 export const Sale: React.FC = () => {
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
-  const [recentSales, setRecentSales] = useState<DailySale[]>([]);
-  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Form State
-  const [selectedProductId, setSelectedProductId] = useState<number | "">("");
-  const [selectedStoreId, setSelectedStoreId] = useState<number>(1);
-  const [quantity, setQuantity] = useState<number | "">(1);
-  const [saleDate, setSaleDate] = useState<string>(
-    new Date().toISOString().split("T")[0]
-  );
-  const [submitting, setSubmitting] = useState(false);
-  const [saleToDelete, setSaleToDelete] = useState<DailySale | null>(null);
-  const [deletingSale, setDeletingSale] = useState(false);
-
-  const getProductId = (product: any) => product?.id ?? product?.productId ?? "";
-  const getStoreId = (store: any) => store?.storeID ?? store?.storeId ?? 1;
-
-  // Fetch data
-  const fetchData = async () => {
-    try {
-      const [prods, strs, sls] = await Promise.all([
-        getProducts(),
-        getStores(),
-        getSales(),
-      ]);
-      setProducts(prods || []);
-      setStores(strs || []);
-      setRecentSales(sls || []);
-
-      if (prods && prods.length > 0) {
-        if (
-          selectedProductId === "" ||
-          !prods.some((p: any) => getProductId(p) === Number(selectedProductId))
-        ) {
-          const availableProd = prods.find((p: any) => (p?.stock ?? 0) > 0) || prods[0];
-          setSelectedProductId(getProductId(availableProd) || "");
-        }
-      }
-      if (strs && strs.length > 0) {
-        const currentStoreId = getStoreId(strs[0]);
-        if (!strs.some((s: any) => getStoreId(s) === selectedStoreId)) {
-          setSelectedStoreId(currentStoreId);
-        }
-      }
-    } catch (error: any) {
-      console.error("Error loading sales entry data:", error);
-      toast.error("Failed to load products or store data.");
-    } finally {
-      setLoadingInitial(false);
-    }
-  };
-
+  // 🎯 1. டேட்டாபேஸிலிருந்து தயாரிப்புகளை (Products) Fetch செய்தல்
   useEffect(() => {
-    fetchData();
-
-    const handleDbUpdate = () => {
-      fetchData();
+    const fetchProducts = async () => {
+      try {
+        const data = await getProducts();
+        if (data && data.length > 0) {
+          setProducts(data);
+        }
+      } catch (err) {
+        console.error('Failed to load products from database:', err);
+      } finally {
+        setIsLoading(false);
+      }
     };
-    window.addEventListener("shopsale-db-updated", handleDbUpdate);
-    return () => window.removeEventListener("shopsale-db-updated", handleDbUpdate);
+
+    fetchProducts();
   }, []);
 
-  const selectedProduct = products.find(
-    (p: any) => getProductId(p) === Number(selectedProductId)
+  // Search & Filter
+  const categories = ['All', ...Array.from(new Set(products.map(p => p.category)))];
+  const filteredProducts = products.filter(p => 
+    (selectedCategory === 'All' || p.category === selectedCategory) &&
+    p.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
-  const numericQty = typeof quantity === "number" ? quantity : 0;
-  const totalPrice = selectedProduct ? (selectedProduct.price * numericQty).toFixed(2) : "0.00";
 
-  const handleResetForm = () => {
-    const availableProd = products.find((p: any) => (p?.stock ?? 0) > 0) || products[0];
-    setSelectedProductId(availableProd ? getProductId(availableProd) : "");
-    setSelectedStoreId(stores.length > 0 ? getStoreId(stores[0]) : 1);
-    setQuantity(1);
-    setSaleDate(new Date().toISOString().split("T")[0]);
+  // Cart Operations
+  const addToCart = (product: Product) => {
+    setCart(prevCart => {
+      const existing = prevCart.find(item => item.id === product.id);
+      if (existing) {
+        return prevCart.map(item => 
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+      return [...prevCart, { ...product, quantity: 1 }];
+    });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const updateQuantity = (id: number, delta: number) => {
+    setCart(prevCart => 
+      prevCart.map(item => {
+        if (item.id === id) {
+          const newQty = item.quantity + delta;
+          return newQty > 0 ? { ...item, quantity: newQty } : item;
+        }
+        return item;
+      })
+    );
+  };
 
-    if (!selectedProductId || selectedProductId === "") {
-      toast.warning("Please select a product.");
-      return;
-    }
+  const removeFromCart = (id: number) => {
+    setCart(prevCart => prevCart.filter(item => item.id !== id));
+  };
 
-    if (!quantity || quantity <= 0) {
-      toast.warning("Please enter a valid quantity of at least 1.");
-      return;
-    }
+  const totalAmount = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-    if (!selectedProduct) {
-      toast.error("Selected product does not exist.");
-      return;
-    }
+  // 🎯 2. விற்பனை விவரங்களை டேட்டாபேஸில் பதிவு செய்தல் (Checkout)
+  const handleCheckout = async () => {
+    if (cart.length === 0) return;
 
-    if (quantity > selectedProduct.stock) {
-      toast.error(`Insufficient inventory! Only ${selectedProduct.stock} units available.`);
-      return;
-    }
-
-    setSubmitting(true);
     try {
-      // ✅ C# DailySales Model / Controller எதிர்பார்ப்பதற்கு ஏற்ப Foreign Keys சேர்க்கப்பட்டுள்ளது
-      const payload = {
-        productId: Number(selectedProductId),
-        storeId: Number(selectedStoreId),
-        quantitySold: Number(numericQty),
-        totalAmount: Number(totalPrice),
-        saleDate: saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()
+      const salePayload = {
+        items: cart.map(item => ({
+          productId: item.id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity
+        })),
+        totalAmount: totalAmount
       };
 
-      await recordSale(payload as any);
+      // C# Backend API மூலம் டேட்டாபேஸில் சேமித்தல்
+      await recordSale(salePayload);
 
-      toast.success(
-        `Sale recorded successfully! Total: ₹${Number(totalPrice).toFixed(2)}`
-      );
-
-      handleResetForm();
-      await fetchData();
-
-      window.dispatchEvent(new CustomEvent("shopsale-db-updated"));
-    } catch (error: any) {
-      console.error("Sale Recording Error Details:", error.response?.data);
-      const message =
-        error.response?.data?.message ||
-        error.response?.data?.innerError ||
-        "Failed to record sale.";
-      toast.error(message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleConfirmDeleteSale = async () => {
-    const saleId = saleToDelete?.saleID || saleToDelete?.saleId;
-    if (!saleToDelete || !saleId) return;
-    try {
-      setDeletingSale(true);
-      await deleteSale(saleId);
-      toast.success(`Sale #${saleId} deleted. Inventory stock restored.`);
-      setSaleToDelete(null);
-      await fetchData();
-      window.dispatchEvent(new CustomEvent("shopsale-db-updated"));
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || "Failed to delete sale record.");
-    } finally {
-      setDeletingSale(false);
+      setIsSuccessModalOpen(true);
+      setTimeout(() => {
+        setIsSuccessModalOpen(false);
+        setCart([]);
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to record sale to database:', err);
+      alert('Failed to complete sale. Please try again.');
     }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
-              <ShoppingCart className="w-5 h-5" />
-            </span>
-            <h2 className="text-xl font-bold text-slate-900">Sales Entry Terminal</h2>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Record retail sales transactions, update inventory counts, and synchronize with SQLite EF Core
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={fetchData}
-            disabled={loadingInitial}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+    <div className="min-h-screen bg-[#18181B] p-4 md:p-8 text-[#FFFBEB] pb-32">
+      
+      {/* 🚀 Header */}
+      <div className="flex items-center justify-between mb-6 max-w-7xl mx-auto">
+        <div className="flex items-center space-x-3">
+          <motion.button 
+            whileTap={{ scale: 0.9 }}
+            onClick={() => navigate('/dashboard')}
+            className="p-2.5 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 text-[#FDE68A]"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingInitial ? "animate-spin" : ""}`} />
-            <span>Refresh Catalog</span>
-          </button>
+            <ArrowLeft className="w-5 h-5" />
+          </motion.button>
+          <div>
+            <h1 className="text-2xl font-bold text-[#FFFBEB]">New Sale (POS)</h1>
+            <p className="text-xs text-[#FDE68A]/70">Live Database Checkout</p>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-2 bg-[#27272A] border border-[#F59E0B]/20 px-3.5 py-2 rounded-2xl">
+          <ShoppingCart className="w-5 h-5 text-[#F59E0B]" />
+          <span className="text-sm font-bold text-[#FFFBEB]">{cart.reduce((a, b) => a + b.quantity, 0)} Items</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-7">
-          <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-2">
-                <Layers className="w-4 h-4 text-indigo-600" />
-                <h3 className="text-sm font-semibold text-slate-900">New Transaction Entry</h3>
-              </div>
-              <span className="text-xs font-mono px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded">
-                POST /api/sales
-              </span>
+      {/* 🖥️ Main Layout Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
+        
+        {/* 🛍️ Left Column: Product Selection Grid */}
+        <div className="lg:col-span-2 space-y-5">
+          
+          {/* Search Bar & Categories */}
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-4 top-3.5 w-5 h-5 text-[#FDE68A]/50" />
+              <input 
+                type="text" 
+                placeholder="Search products from database..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-12 pr-4 py-3 bg-[#27272A] border border-[#F59E0B]/20 rounded-2xl text-[#FFFBEB] placeholder-[#FDE68A]/40 focus:outline-none focus:border-[#F59E0B] transition-all"
+              />
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-5">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Package className="w-3.5 h-3.5 text-indigo-500" />
-                    Select Product *
-                  </span>
-                  {selectedProduct && (
-                    <span
-                      className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                        selectedProduct.stock < 15
-                          ? "bg-amber-50 text-amber-700 border border-amber-200"
-                          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      }`}
-                    >
-                      In Stock: {selectedProduct.stock} units
-                    </span>
-                  )}
-                </label>
-
-                <select
-                  value={selectedProductId}
-                  onChange={(e) => setSelectedProductId(Number(e.target.value))}
-                  required
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors shadow-2xs"
-                >
-                  <option value="" disabled>-- Select a Product --</option>
-                  {products.map((p) => {
-                    const pId = p.id || p.productId;
-                    return (
-                      <option key={pId} value={pId} disabled={p.stock <= 0}>
-                        {p.name || p.productName} — ₹{p.price.toFixed(2)} ({p.category}) [{p.stock <= 0 ? "Out of Stock" : `Stock: ${p.stock}`}]
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <StoreIcon className="w-3.5 h-3.5 text-indigo-500" />
-                    Store Location *
-                  </label>
-                  <select
-                    value={selectedStoreId}
-                    onChange={(e) => setSelectedStoreId(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors shadow-2xs"
-                  >
-                    {stores.map((s) => {
-                      const sId = s.storeID || s.storeId;
-                      return (
-                        <option key={sId} value={sId}>
-                          {s.name || s.storeName} ({s.location})
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                    Sale Date *
-                  </label>
-                  <input
-                    type="date"
-                    value={saleDate}
-                    onChange={(e) => setSaleDate(e.target.value)}
-                    required
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors shadow-2xs"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
-                    Quantity to Sell *
-                  </span>
-                  {selectedProduct && selectedProduct.stock > 0 && (
-                    <span className="text-xs text-slate-500">
-                      Max: {selectedProduct.stock}
-                    </span>
-                  )}
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="1"
-                    max={selectedProduct ? selectedProduct.stock : 9999}
-                    value={quantity}
-                    onChange={(e) => {
-                      const val = e.target.value === "" ? "" : parseInt(e.target.value, 10);
-                      setQuantity(val);
-                    }}
-                    required
-                    placeholder="Enter quantity"
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-lg text-sm text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors shadow-2xs"
-                  />
-                </div>
-                {selectedProduct && numericQty > selectedProduct.stock && (
-                  <p className="mt-1.5 text-xs text-rose-600 flex items-center gap-1 font-medium">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                    Quantity exceeds available stock ({selectedProduct.stock})
-                  </p>
-                )}
-              </div>
-
-              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200/80 space-y-2">
-                <div className="flex justify-between text-xs text-slate-500">
-                  <span>Unit Price:</span>
-                  <span className="font-medium text-slate-700">
-                    ₹{selectedProduct ? selectedProduct.price.toFixed(2) : "0.00"}
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-500">
-                  <span>Quantity:</span>
-                  <span className="font-medium text-slate-700">{numericQty} units</span>
-                </div>
-                <div className="pt-2 border-t border-slate-200 flex justify-between items-baseline">
-                  <span className="text-sm font-semibold text-slate-800">Total Sale Amount:</span>
-                  <span className="text-xl font-bold text-indigo-600">₹{totalPrice}</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 pt-2">
+            {/* Categories */}
+            <div className="flex space-x-2 overflow-x-auto pb-1 scrollbar-none">
+              {categories.map(cat => (
                 <button
-                  type="submit"
-                  disabled={submitting || (selectedProduct ? numericQty > selectedProduct.stock || selectedProduct.stock <= 0 : false)}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold shadow-md shadow-indigo-600/20 transition-all disabled:opacity-60 cursor-pointer"
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                    selectedCategory === cat 
+                      ? 'bg-[#F59E0B] text-[#18181B] font-bold shadow-md shadow-[#F59E0B]/20' 
+                      : 'bg-[#27272A] text-[#FDE68A]/70 border border-[#F59E0B]/10 hover:text-[#FFFBEB]'
+                  }`}
                 >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Recording Sale...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Submit Sale Transaction</span>
-                    </>
-                  )}
+                  {cat}
                 </button>
-                <button
-                  type="button"
-                  onClick={handleResetForm}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                >
-                  Reset
-                </button>
-              </div>
-            </form>
+              ))}
+            </div>
           </div>
+
+          {/* Product Grid */}
+          {isLoading ? (
+            <div className="text-center py-16 text-[#FDE68A]/60 text-sm">Loading database products...</div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="text-center py-16 text-[#FDE68A]/60 text-sm">No products found in database. Add items via Inventory or AI Scanner.</div>
+          ) : (
+            <motion.div 
+              className="grid grid-cols-2 md:grid-cols-3 gap-3"
+              variants={containerVariants}
+              initial="hidden"
+              animate="visible"
+            >
+              {filteredProducts.map(product => (
+                <motion.div
+                  key={product.id}
+                  variants={itemVariants}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => addToCart(product)}
+                  className="p-4 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 hover:border-[#F59E0B] cursor-pointer flex flex-col justify-between transition-all"
+                >
+                  <div>
+                    <span className="text-[10px] text-[#FDE68A] bg-[#18181B] px-2 py-0.5 rounded-md font-medium border border-[#F59E0B]/10">
+                      {product.category}
+                    </span>
+                    <h3 className="text-sm font-semibold text-[#FFFBEB] mt-2 line-clamp-1">{product.name}</h3>
+                    <p className="text-xs text-[#FDE68A]/60">Stock: {product.stock}</p>
+                  </div>
+
+                  <div className="flex justify-between items-center mt-3 pt-2 border-t border-[#F59E0B]/10">
+                    <span className="text-base font-bold text-[#FFFBEB]">₹{product.price}</span>
+                    <div className="p-1.5 rounded-xl bg-[#F59E0B] text-[#18181B] font-bold">
+                      <Plus className="w-4 h-4" />
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+
         </div>
 
-        <div className="lg:col-span-5 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
-            <h3 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
-              <IndianRupee className="w-4 h-4 text-emerald-600" />
-              Item Summary & Specification
-            </h3>
-
-            {selectedProduct ? (
-              <div className="space-y-4">
-                <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600 bg-indigo-100/60 px-2 py-0.5 rounded">
-                    {selectedProduct.category}
-                  </span>
-                  <h4 className="text-base font-bold text-slate-900 mt-1.5">{selectedProduct.name || selectedProduct.productName}</h4>
-                  <div className="mt-3 flex items-baseline justify-between">
-                    <span className="text-2xl font-black text-slate-900">
-                      ₹{selectedProduct.price.toFixed(2)}
-                    </span>
-                    <span className="text-xs text-slate-500">Retail MSRP</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80">
-                    <span className="text-slate-500 block">Available Units</span>
-                    <span className="text-base font-bold text-slate-800 mt-0.5 block">
-                      {selectedProduct.stock}
-                    </span>
-                  </div>
-                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80">
-                    <span className="text-slate-500 block">Post-Sale Stock</span>
-                    <span className={`text-base font-bold mt-0.5 block ${selectedProduct.stock - numericQty < 0 ? "text-rose-600" : "text-slate-800"}`}>
-                      {selectedProduct.stock - numericQty}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-200/80 flex items-start gap-2">
-                  <Clock className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-                  <span>
-                    Database automatically updates the <code>DailySales</code> table with foreign keys to Store and Product upon confirmation.
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="p-8 text-center text-slate-400 text-xs">
-                Select a product to view real-time inventory and pricing details.
-              </div>
+        {/* 🛒 Right Column: Cart & Summary */}
+        <div className="bg-[#27272A] border border-[#F59E0B]/20 rounded-3xl p-5 flex flex-col justify-between h-fit space-y-4 shadow-xl">
+          <div className="flex justify-between items-center pb-3 border-b border-[#F59E0B]/20">
+            <h2 className="text-lg font-bold text-[#FFFBEB]">Cart Summary</h2>
+            {cart.length > 0 && (
+              <button 
+                onClick={() => setCart([])} 
+                className="text-xs text-rose-400 hover:underline font-medium"
+              >
+                Clear All
+              </button>
             )}
           </div>
-        </div>
-      </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900">Recent Sales Transactions</h3>
-            <p className="text-xs text-slate-500">Synchronized records from SQLite database</p>
-          </div>
-          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full">
-            {recentSales.length} Total Sales
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
-              <tr>
-                <th className="px-6 py-3.5">Sale ID</th>
-                <th className="px-6 py-3.5">Date</th>
-                <th className="px-6 py-3.5">Store</th>
-                <th className="px-6 py-3.5">Product</th>
-                <th className="px-6 py-3.5">Unit Price</th>
-                <th className="px-6 py-3.5">Qty Sold</th>
-                <th className="px-6 py-3.5 text-right">Total Amount</th>
-                <th className="px-4 py-3.5 text-center w-16">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {recentSales.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-slate-400">
-                    No sales recorded yet. Submit your first transaction above!
-                  </td>
-                </tr>
+          {/* Cart Item List */}
+          <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+            <AnimatePresence>
+              {cart.length === 0 ? (
+                <div className="text-center py-10 text-[#FDE68A]/50 space-y-2">
+                  <Package className="w-10 h-10 mx-auto opacity-40 text-[#F59E0B]" />
+                  <p className="text-xs">Cart is empty. Tap products to add.</p>
+                </div>
               ) : (
-                recentSales.map((sale: any, idx) => {
-                  const currentSaleId = sale.saleID || sale.saleId;
-                  const storeName = sale.storeName || sale.store?.storeName || `Store #${sale.storeID || sale.storeId || 1}`;
-                  const productName = sale.productName || sale.product?.productName || "Unknown Product";
-                  const productCategory = sale.productCategory || sale.product?.category || "";
-                  const unitPrice = sale.productUnitPrice || sale.unitPrice || sale.product?.price || 0;
-                  const totalAmt = sale.totalAmount || 0;
+                cart.map(item => (
+                  <motion.div 
+                    key={item.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    className="p-3 bg-[#18181B] border border-[#F59E0B]/20 rounded-2xl flex justify-between items-center"
+                  >
+                    <div>
+                      <p className="text-xs font-semibold text-[#FFFBEB] line-clamp-1">{item.name}</p>
+                      <p className="text-[11px] text-[#FDE68A]/70">₹{item.price} × {item.quantity} = ₹{item.price * item.quantity}</p>
+                    </div>
 
-                  return (
-                    <tr key={currentSaleId ?? idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="px-6 py-3 font-mono font-medium text-indigo-600">
-                        #{currentSaleId ? currentSaleId.toString().padStart(4, "0") : "N/A"}
-                      </td>
-                      <td className="px-6 py-3 text-slate-500">
-                        {sale.saleDate
-                          ? new Date(sale.saleDate).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            })
-                          : "N/A"}
-                      </td>
-                      <td className="px-6 py-3 font-medium text-slate-800">
-                        {storeName}
-                      </td>
-                      <td className="px-6 py-3 font-medium text-slate-900">
-                        {productName}
-                        {productCategory && (
-                          <span className="block text-[10px] text-slate-400 font-normal">
-                            {productCategory}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-3 text-slate-600">
-                        ₹{unitPrice ? Number(unitPrice).toFixed(2) : "0.00"}
-                      </td>
-                      <td className="px-6 py-3 font-semibold text-slate-800">
-                        {sale.quantitySold}x
-                      </td>
-                      <td className="px-6 py-3 text-right font-bold text-emerald-600 text-sm">
-                        ₹{totalAmt ? Number(totalAmt).toFixed(2) : "0.00"}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => setSaleToDelete(sale)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
-                          title="Delete Sale Transaction"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
+                    <div className="flex items-center space-x-1.5 bg-[#27272A] p-1 rounded-xl border border-[#F59E0B]/10">
+                      <button 
+                        onClick={() => updateQuantity(item.id, -1)}
+                        className="p-1 rounded-lg bg-[#18181B] text-[#FFFBEB] hover:text-[#F59E0B]"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="text-xs font-bold px-1 text-[#F59E0B]">{item.quantity}</span>
+                      <button 
+                        onClick={() => updateQuantity(item.id, 1)}
+                        className="p-1 rounded-lg bg-[#18181B] text-[#FFFBEB] hover:text-[#F59E0B]"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                      <button 
+                        onClick={() => removeFromCart(item.id)}
+                        className="p-1 text-rose-400 hover:text-rose-300 ml-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </motion.div>
+                ))
               )}
-            </tbody>
-          </table>
+            </AnimatePresence>
+          </div>
+
+          {/* Total & Checkout */}
+          <div className="pt-4 border-t border-[#F59E0B]/20 space-y-3">
+            <div className="flex justify-between text-sm text-[#FDE68A]/80">
+              <span>Subtotal:</span>
+              <span>₹{totalAmount}</span>
+            </div>
+            <div className="flex justify-between text-lg font-black text-[#FFFBEB]">
+              <span>Total Payable:</span>
+              <span className="text-[#F59E0B]">₹{totalAmount}</span>
+            </div>
+
+            <motion.button
+              whileTap={{ scale: 0.96 }}
+              onClick={handleCheckout}
+              disabled={cart.length === 0}
+              className={`w-full py-3.5 rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg transition-all ${
+                cart.length > 0 
+                  ? 'bg-gradient-to-r from-[#F59E0B] to-[#D97706] text-[#18181B] hover:opacity-90 shadow-[#F59E0B]/20 cursor-pointer' 
+                  : 'bg-[#18181B] text-[#FDE68A]/30 cursor-not-allowed border border-[#F59E0B]/10'
+              }`}
+            >
+              <CreditCard className="w-5 h-5" />
+              <span>Complete Sale</span>
+            </motion.button>
+          </div>
+
         </div>
+
       </div>
 
-      {saleToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden">
-            <div className="p-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-                  <Trash2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">Delete Sale Transaction</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    This will remove the transaction and restore product inventory.
-                  </p>
-                </div>
-              </div>
+      {/* 🎉 Animated Success Modal */}
+      <AnimatePresence>
+        {isSuccessModalOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-50"
+          >
+            <motion.div 
+              initial={{ scale: 0.8, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.8, y: 20 }}
+              className="bg-[#18181B] border border-[#F59E0B]/40 rounded-3xl p-6 text-center space-y-4 max-w-sm w-full shadow-2xl"
+            >
+              <CheckCircle className="w-16 h-16 text-[#F59E0B] mx-auto animate-bounce" />
+              <h3 className="text-xl font-bold text-[#FFFBEB]">Sale Completed!</h3>
+              <p className="text-xs text-[#FDE68A]/70">Transaction recorded successfully in database.</p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-              <div className="mt-4 p-3.5 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-700">
-                <div className="font-bold text-slate-900">
-                  Sale #{saleToDelete.saleID || saleToDelete.saleId || "N/A"}
-                </div>
-                <div className="text-slate-600 mt-1 space-y-0.5">
-                  <div>Product: <strong className="text-slate-800">{saleToDelete.productName || saleToDelete.product?.productName}</strong></div>
-                  <div>Quantity: <strong className="text-slate-800">{saleToDelete.quantitySold} units</strong></div>
-                  <div>Total Amount: <strong className="text-emerald-600">₹{saleToDelete.totalAmount?.toFixed(2)}</strong></div>
-                </div>
-              </div>
-
-              <div className="mt-6 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setSaleToDelete(null)}
-                  disabled={deletingSale}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmDeleteSale}
-                  disabled={deletingSale}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors disabled:opacity-60 cursor-pointer"
-                >
-                  {deletingSale ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-3.5 h-3.5" />
-                  )}
-                  <span>{deletingSale ? "Deleting..." : "Confirm Delete"}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

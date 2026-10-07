@@ -11,9 +11,9 @@ import {
   SqlQueryResult,
 } from "../types";
 
-// 1. Base URL Configuration (.env-ல் உள்ள URL-ஐ எடுக்கிறது)
+// 🎯 1. Base URL Configuration
 export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+  import.meta.env.VITE_API_BASE_URL || "/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -21,10 +21,10 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  withCredentials: false,
+  withCredentials: true,
 });
 
-// Helper: லாகின் செய்துள்ள பயனரின் விவரங்களை LocalStorage-லிருந்து எடுக்கும் செயல்பாடு
+// Helper Functions
 const getCurrentUserInfo = () => {
   try {
     const userStr = localStorage.getItem("user");
@@ -40,7 +40,7 @@ const getUserStoreId = (): number | null => {
   return user ? (user.storeId || user.id || null) : null;
 };
 
-// 2. JWT Request Interceptor
+// 2. Request Interceptor (Adds JWT Bearer Token)
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("token");
@@ -52,26 +52,28 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// 3. Response Interceptor
+// 3. Response Interceptor (Handles Unauthorized Errors Safely)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      const isLoginUrl = error.config?.url?.includes("/auth/login");
+      const requestUrl = error.config?.url?.toLowerCase() || "";
+      const isLoginUrl = requestUrl.includes("/auth/login") || requestUrl.includes("/auth/register");
+      
       if (!isLoginUrl) {
         localStorage.removeItem("token");
         localStorage.removeItem("user");
-        window.location.href = "/login";
+        window.location.href = "/";
       }
     }
     return Promise.reject(error);
   }
 );
 
-// ==================== AUTH API ====================
+// ==================== AUTHENTICATION API ====================
 export const loginUser = async (credentials: { username: string; password: string }) => {
-  const response = await api.post<{ token: string; user: { id: number; username: string; role: string; storeId?: number } }>(
-    "/auth/login",
+  const response = await api.post<{ token: string; user: { id: number | string; username: string; role: string; storeId?: number } }>(
+    "/Auth/login",
     credentials
   );
   if (response.data.token) {
@@ -81,13 +83,24 @@ export const loginUser = async (credentials: { username: string; password: strin
   return response.data;
 };
 
+export const registerUser = async (userData: {
+  username: string;
+  fullName?: string;
+  storeName?: string;
+  email?: string;
+  password: string;
+  role?: string;
+}) => {
+  const response = await api.post<{ message: string }>("/Auth/register", userData);
+  return response.data;
+};
+
 export const logoutUser = () => {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
 };
 
 // ==================== PRODUCTS API ====================
-// 🎯 Store ID அல்லது User ID வைத்து பில்டர் செய்து குறிப்பிட்ட பயனரின் பொருட்களை மட்டும் எடுக்கிறது
 export const getProducts = async (): Promise<Product[]> => {
   const user = getCurrentUserInfo();
   const storeId = user?.storeId || user?.id;
@@ -102,7 +115,6 @@ export const getProductById = async (id: number): Promise<Product> => {
   return response.data;
 };
 
-// 🎯 புதிய பொருளை உருவாக்கும் போது Store ID இணைக்கப்படுகிறது
 export const createProduct = async (product: Omit<Product, "id">): Promise<Product> => {
   const user = getCurrentUserInfo();
   const storeId = user?.storeId || user?.id || 1;
@@ -132,7 +144,6 @@ export const getStores = async (): Promise<Store[]> => {
   return response.data;
 };
 
-// 🎯 User ID மற்றும் Store ID வைத்து தனித்தனியாக Sales Data எடுக்கிறது
 export const getSales = async (): Promise<DailySale[]> => {
   const user = getCurrentUserInfo();
   let url = "/Sales";
@@ -202,6 +213,7 @@ export const scanDocument = async (file: File): Promise<DocScanResult> => {
   return response.data;
 };
 
+// ==================== REPORTS & ANALYTICS API ====================
 export const getSummaryReport = async (): Promise<SummaryReport> => {
   const user = getCurrentUserInfo();
   const storeId = user?.storeId || user?.id;
@@ -218,14 +230,31 @@ export const getDailySalesRecords = async (): Promise<DailySalesRecord[]> => {
   return response.data;
 };
 
-export const getCSharpCode = async (fileName: string): Promise<{ file: string; content: string }> => {
-  const response = await api.get<{ file: string; content: string }>(
-    `/csharp-code?file=${encodeURIComponent(fileName)}`
-  );
+// 🎯 டிரான்சாக்ஷன் ஹிஸ்டரிக்கான புதிய API
+export const getRecentSalesRecords = async (): Promise<any[]> => {
+  const user = getCurrentUserInfo();
+  const storeId = user?.storeId || user?.id;
+  const url = storeId ? `/reports/recent-sales?storeId=${storeId}` : "/reports/recent-sales";
+  const response = await api.get<any[]>(url);
   return response.data;
 };
 
-// ==================== SQLITE DATABASE MANAGEMENT ====================
+// ==================== USER MANAGEMENT & DATABASE API ====================
+export const createUser = async (userData: { username: string; password: string; role?: string }) => {
+  const response = await api.post<{ message: string }>("/users/register", userData);
+  return response.data;
+};
+
+export const registerManager = async (managerData: { username: string; password: string }) => {
+  const response = await api.post<{ message: string }>("/users/register-manager", managerData);
+  return response.data;
+};
+
+export const createAgent = async (agentData: { username: string; password: string }) => {
+  const response = await api.post<{ message: string }>("/users/create-agent", agentData);
+  return response.data;
+};
+
 export const getDatabaseInfo = async (): Promise<DatabaseInfo> => {
   const response = await api.get<DatabaseInfo>("/database/info");
   return response.data;
@@ -249,21 +278,6 @@ export const executeSqlQuery = async (query: string): Promise<SqlQueryResult> =>
 
 export const resetSqliteDatabase = async (): Promise<{ message: string; info: DatabaseInfo }> => {
   const response = await api.post<{ message: string; info: DatabaseInfo }>("/database/reset");
-  return response.data;
-};
-
-export const createUser = async (userData: { username: string; password: string; role?: string }) => {
-  const response = await api.post<{ message: string }>("/users/register", userData);
-  return response.data;
-};
-
-export const registerManager = async (managerData: { username: string; password: string }) => {
-  const response = await api.post<{ message: string }>("/users/register-manager", managerData);
-  return response.data;
-};
-
-export const createAgent = async (agentData: { username: string; password: string }) => {
-  const response = await api.post<{ message: string }>("/users/create-agent", agentData);
   return response.data;
 };
 

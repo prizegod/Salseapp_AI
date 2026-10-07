@@ -1,5 +1,4 @@
-// @ts-nocheck
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -7,33 +6,33 @@ import "react-toastify/dist/ReactToastify.css";
 // Layout
 import { MainLayout } from "./layouts/MainLayout";
 
-// Pages
+// Security Component
+import { ProtectedRoute } from "./components/ProtectedRoute";
+
+// Pages (Standard Imports)
 import { Login } from "./pages/Login";
 import { SignUp } from "./pages/SignUp";
-import { Dashboard } from "./pages/Dashboard";
+import Dashboard from "./pages/Dashboard";
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { Products } from "./pages/Products";
 import { Sale } from "./pages/Sale";
-import { DocScanner } from "./pages/DocScanner";
 import { Reports } from "./pages/Reports";
 import { UserManagement } from "./pages/UserManagement";
 
-// 🎯 Role அடிப்படையிலான Dashboard Component (All LocalStorage Fallbacks Added)
+// 🎯 DocScanner-ஐ எரர் இல்லாமல் லோட் செய்ய Lazy Import
+const DocScanner = lazy(() => import("./pages/DocScanner"));
+
+// 🎯 Role அடிப்படையிலான Dashboard Component
 const DashboardRoute = () => {
-  // 1. JSON 'user' object இருந்தால் எடுக்கிறது
   const userStr = localStorage.getItem("user");
   const userObj = userStr ? JSON.parse(userStr) : null;
-
-  // 2. 'user_role' அல்லது 'user.role' இரண்டிலும் தேடுகிறது
   const role = userObj?.role || localStorage.getItem("user_role") || localStorage.getItem("role");
-
-  // 3. Case-insensitive "admin" சரிபார்ப்பு
   const isAdmin = role?.toString().toLowerCase() === "admin";
 
   return isAdmin ? <AdminDashboard /> : <Dashboard />;
 };
 
-export default function App() {
+export function App() {
   return (
     <BrowserRouter>
       {/* Global Toast Container */}
@@ -51,65 +50,110 @@ export default function App() {
         theme="colored"
       />
 
-      <Routes>
-        {/* Auth routes */}
-        <Route path="/" element={<Login />} />
-        <Route path="/signup" element={<SignUp />} />
+      <Suspense
+        fallback={
+          <div className="min-h-screen bg-[#18181B] flex items-center justify-center text-[#F59E0B]">
+            <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-[#F59E0B]" />
+          </div>
+        }
+      >
+        <Routes>
+          {/* Public Auth Routes */}
+          <Route path="/" element={<Login />} />
+          <Route path="/signup" element={<SignUp />} />
 
-        {/* Protected / App routes wrapped in MainLayout */}
-        <Route
-          path="/dashboard"
-          element={
-            <MainLayout>
-              <DashboardRoute />
-            </MainLayout>
-          }
-        />
-        <Route
-          path="/products"
-          element={
-            <MainLayout>
-              <Products />
-            </MainLayout>
-          }
-        />
-        <Route
-          path="/sales"
-          element={
-            <MainLayout>
-              <Sale />
-            </MainLayout>
-          }
-        />
-        <Route
-          path="/scanner"
-          element={
-            <MainLayout>
-              <DocScanner />
-            </MainLayout>
-          }
-        />
-        <Route
-          path="/reports"
-          element={
-            <MainLayout>
-              <Reports />
-            </MainLayout>
-          }
-        />
-        {/* 🎯 User Management Route (Admin-க்காகச் சேர்க்கப்பட்டுள்ளது) */}
-        <Route
-          path="/users"
-          element={
-            <MainLayout>
-              <UserManagement />
-            </MainLayout>
-          }
-        />
+          {/* 🔒 Protected Routes */}
+          
+          {/* 1. General Dashboard */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <MainLayout>
+                  <DashboardRoute />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Fallback redirect */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          {/* 2. 🎯 Admin Dedicated Dashboard Route (Login.tsx-லிருந்து வரும் navigate('/admin-dashboard') -க்காகச் சேர்க்கப்பட்டது) */}
+          <Route
+            path="/admin-dashboard"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <MainLayout>
+                  <AdminDashboard />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 3. Products Page */}
+          <Route
+            path="/products"
+            element={
+              <ProtectedRoute>
+                <MainLayout>
+                  <Products />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 4. Sales Page */}
+          <Route
+            path="/sales"
+            element={
+              <ProtectedRoute>
+                <MainLayout>
+                  <Sale />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 5. Document Scanner */}
+          <Route
+            path="/scanner"
+            element={
+              <ProtectedRoute>
+                <MainLayout>
+                  <DocScanner />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 6. Reports */}
+          <Route
+            path="/reports"
+            element={
+              <ProtectedRoute>
+                <MainLayout>
+                  <Reports />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 7. User Management */}
+          <Route
+            path="/users"
+            element={
+              <ProtectedRoute allowedRoles={["admin", "manager"]}>
+                <MainLayout>
+                  <UserManagement />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Fallback redirect */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }
+
+export default App;

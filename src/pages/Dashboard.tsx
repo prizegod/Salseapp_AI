@@ -1,358 +1,253 @@
-// @ts-nocheck
-import React, { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import {
-  IndianRupee,
-  TrendingUp,
-  Package,
-  AlertTriangle,
-  ShoppingCart,
-  ScanLine,
-  ArrowRight,
-  User as UserIcon,
-  LogOut,
-  ShieldCheck
-} from "lucide-react";
-import { getSummaryReport, getDailySalesRecords, getSales } from "../services/api";
-import { SummaryReport, DailySalesRecord, DailySale } from "../types";
+import React, { useState, useEffect } from 'react';
+import { motion, Variants } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
+import { 
+  TrendingUp, 
+  Package, 
+  ShoppingCart, 
+  Scan, 
+  ArrowUpRight, 
+  Zap, 
+  CreditCard,
+  BarChart3,
+  Store
+} from 'lucide-react';
+import { getSummaryReport } from '../services/api'; // 🎯 API-லிருந்து டேட்டா பெற இறக்குமதி செய்யப்பட்டுள்ளது
+
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.1 }
+  },
+};
+
+const cardVariants: Variants = {
+  hidden: { opacity: 0, y: 20, scale: 0.97 },
+  visible: { 
+    opacity: 1, 
+    y: 0, 
+    scale: 1,
+    transition: { type: 'spring' as const, stiffness: 260, damping: 20 }
+  },
+};
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   
-  // 1. 👤 லாகின் செய்த பயனரின் விவரங்களை வைத்திருக்க State
-  const [currentUser, setCurrentUser] = useState({
-    id: "",
-    username: "",
-    role: ""
+  // 🎯 டேட்டாபேஸ் தரவுகளைச் சேமிக்க State உருவாக்கம்
+  const [summaryData, setSummaryData] = useState({
+    todaySales: 0,
+    totalProducts: 0,
+    totalOrders: 0,
   });
+  const [isLoading, setIsLoading] = useState(true);
 
-  const [summary, setSummary] = useState<SummaryReport | null>(null);
-  const [dailySales, setDailySales] = useState<DailySalesRecord[]>([]);
-  const [recentSales, setRecentSales] = useState<DailySale[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // 2. லாகின் சரிபார்ப்பு & LocalStorage தரவை எடுத்தல்
+  // 🎯 டேஷ்போர்ட் திறந்தவுடன் டேட்டாபேஸிலிருந்து லைவ் டேட்டாவை Fetch செய்தல்
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const username = localStorage.getItem("username");
-    const role = localStorage.getItem("user_role");
-    const id = localStorage.getItem("user_id");
-
-    // Token இல்லை என்றால் லாகின் பக்கத்திற்குத் திருப்பியனுப்பும்
-    if (!token) {
-      window.location.href = "/";
-      return;
-    }
-
-    setCurrentUser({
-      id: id || "N/A",
-      username: username || "User",
-      role: role || "Agent"
-    });
+    const fetchDashboardData = async () => {
+      try {
+        const data: any = await getSummaryReport();
+        if (data) {
+          setSummaryData({
+            todaySales: data.todaySales || data.totalRevenue || 0,
+            totalProducts: data.totalProducts || 0,
+            totalOrders: data.totalOrders || 0,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load dashboard summary data from database:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
     fetchDashboardData();
-
-    const handleDbUpdate = () => {
-      fetchDashboardData();
-    };
-    window.addEventListener("shopsale-db-updated", handleDbUpdate);
-    return () => window.removeEventListener("shopsale-db-updated", handleDbUpdate);
   }, []);
 
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
-      const [sum, daily, sls] = await Promise.all([
-        getSummaryReport(),
-        getDailySalesRecords(),
-        getSales(),
-      ]);
-      setSummary(sum);
-      setDailySales(daily);
-      setRecentSales(sls.slice(0, 5));
-    } catch (err) {
-      console.error("Failed to load dashboard metrics:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 3. 🚪 Sign Out ஃபங்க்ஷன்
-  const handleLogout = () => {
-    localStorage.clear();
-    window.location.href = "/";
-  };
-
   return (
-    <div className="space-y-6">
-      {/* 👤 NEW: Login User Details Card Header */}
-      <div className="bg-slate-800 border border-slate-700/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 text-white shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-            <UserIcon className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-bold text-white">
-                Welcome, {currentUser.username}!
-              </h3>
-              <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                {currentUser.role}
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-              User ID: <span className="font-mono text-slate-200">{currentUser.id}</span>
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+    <motion.div 
+      className="min-h-screen bg-[#18181B] p-4 md:p-8 space-y-6 max-w-7xl mx-auto pb-24 text-[#FFFBEB]"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      {/* 🚀 Top Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Main Revenue Banner */}
+        <motion.div 
+          variants={cardVariants}
+          className="lg:col-span-2 relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#F59E0B] via-[#D97706] to-[#78350F] p-6 md:p-8 shadow-xl shadow-[#F59E0B]/10 text-[#18181B] flex flex-col justify-between"
         >
-          <LogOut className="w-4 h-4" />
-          <span>Sign Out</span>
-        </button>
-      </div>
-
-      {/* Top Banner / Store Status */}
-      <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-slate-900 rounded-2xl p-6 lg:p-8 text-white shadow-lg border border-indigo-900/40 relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                Active Terminal #{currentUser.id}
-              </span>
-              <span className="text-xs text-slate-400">
-                {currentUser.role === "Manager" ? "Manager Console" : "Agent Workstation"}
-              </span>
+          <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-white/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <p className="text-xs md:text-sm uppercase tracking-wider text-[#18181B]/80 font-bold">Today's Revenue</p>
+              <h1 className="text-4xl md:text-5xl font-black text-[#18181B] mt-1">
+                {isLoading ? 'Loading...' : `₹${summaryData.todaySales.toLocaleString('en-IN')}`}
+              </h1>
             </div>
-            <h2 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">
-              ShopSale Overview Dashboard
-            </h2>
-            <p className="text-xs text-slate-300 max-w-xl">
-              Enterprise retail management with ASP.NET Core 6.0 Web API & SQLite EF Core.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              to="/sales"
-              className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-indigo-600/30 transition-all"
+            <motion.div 
+              whileHover={{ scale: 1.1, rotate: 5 }}
+              whileTap={{ scale: 0.9 }}
+              className="p-3.5 bg-[#18181B]/10 backdrop-blur-md rounded-2xl border border-black/10 text-[#18181B]"
             >
-              <ShoppingCart className="w-4 h-4" />
-              <span>Sales Terminal</span>
-            </Link>
-            <Link
-              to="/scanner"
-              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition-all"
-            >
-              <ScanLine className="w-4 h-4 text-indigo-400" />
-              <span>AI Receipt Scanner</span>
-            </Link>
+              <TrendingUp className="w-7 h-7" />
+            </motion.div>
           </div>
-        </div>
-      </div>
 
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Revenue */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-medium text-slate-500">Total Net Revenue</p>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">
-              ₹{(summary?.totalRevenue ?? 0).toFixed(2)}
-            </h3>
-            <p className="text-[11px] text-emerald-600 font-medium mt-1 flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> Live SQLite calculation
-            </p>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <IndianRupee className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Transactions */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-medium text-slate-500">Sales Transactions</p>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">
-              {summary?.totalSalesCount ?? 0}
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-1">
-              {summary?.totalUnitsSold ?? 0} total units sold
-            </p>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-            <ShoppingCart className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Active Products */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-medium text-slate-500">Active Products</p>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">
-              {summary?.totalProducts ?? 0}
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-1">Catalog Active</p>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-            <Package className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Low Stock Warning */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-medium text-slate-500">Low Stock Alerts</p>
-            <h3 className="text-2xl font-black text-amber-600 mt-1">
-              {summary?.lowStockAlerts ?? 0}
-            </h3>
-            <p className="text-[11px] text-amber-700 font-medium mt-1">Items under 20 units</p>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-            <AlertTriangle className="w-6 h-6" />
-          </div>
-        </div>
-      </div>
-
-      {/* Quick Action Shortcuts */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Link
-          to="/sales"
-          className="group bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-indigo-400 hover:shadow-md transition-all flex items-start justify-between"
-        >
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                <ShoppingCart className="w-4 h-4" />
-              </span>
-              <h4 className="text-sm font-bold text-slate-900">New Sale Entry</h4>
+          <div className="flex items-center justify-between pt-4 border-t border-black/10">
+            <div className="flex items-center space-x-2 text-xs md:text-sm font-bold bg-[#18181B]/10 px-3 py-1.5 rounded-full">
+              <ArrowUpRight className="w-4 h-4" />
+              <span>Database Live Sync</span>
             </div>
-            <p className="text-xs text-slate-500">Select product, enter quantity, update stock</p>
+            <span className="text-xs font-semibold text-[#18181B]/70">ShopSale POS Secure</span>
           </div>
-          <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-1 transition-all mt-1" />
-        </Link>
+        </motion.div>
 
-        <Link
-          to="/scanner"
-          className="group bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-indigo-400 hover:shadow-md transition-all flex items-start justify-between"
+        {/* Cloud Status Card */}
+        <motion.div 
+          variants={cardVariants}
+          className="p-6 rounded-3xl bg-[#27272A] border border-[#F59E0B]/20 shadow-lg flex flex-col justify-between"
         >
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="p-1.5 bg-purple-50 text-purple-600 rounded-lg group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                <ScanLine className="w-4 h-4" />
+          <div className="flex items-center space-x-3 mb-4">
+            <div className="relative p-3 rounded-2xl bg-[#F59E0B]/20 text-[#F59E0B]">
+              <Zap className="w-6 h-6" />
+              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#F59E0B] opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-[#F59E0B]"></span>
               </span>
-              <h4 className="text-sm font-bold text-slate-900">AI Receipt Scanner</h4>
             </div>
-            <p className="text-xs text-slate-500">Upload PDF or receipt image for invoice parsing</p>
+            <div>
+              <h3 className="text-base font-bold text-[#FFFBEB]">Cloud System</h3>
+              <p className="text-xs text-[#FDE68A]/70">Multi-Store Live Sync</p>
+            </div>
           </div>
-          <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-1 transition-all mt-1" />
-        </Link>
+          <div className="space-y-2 text-xs text-[#FDE68A] bg-[#18181B] p-3 rounded-2xl border border-[#F59E0B]/20">
+            <div className="flex justify-between">
+              <span>Backend Server:</span>
+              <span className="text-emerald-400 font-bold">Connected (.NET)</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Database Engine:</span>
+              <span className="text-[#F59E0B] font-bold">SQLite Active</span>
+            </div>
+          </div>
+        </motion.div>
 
-        <Link
-          to="/products"
-          className="group bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-indigo-400 hover:shadow-md transition-all flex items-start justify-between"
-        >
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="p-1.5 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                <Package className="w-4 h-4" />
-              </span>
-              <h4 className="text-sm font-bold text-slate-900">Inventory Catalog</h4>
-            </div>
-            <p className="text-xs text-slate-500">Manage stock levels and price points</p>
-          </div>
-          <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-1 transition-all mt-1" />
-        </Link>
       </div>
 
-      {/* Daily Sales Aggregation & Recent Activity Table */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Daily Sales Grouped History */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">Sales Grouped By Date</h3>
-            <span className="text-[11px] text-slate-500 font-medium">Daily Totals</span>
-          </div>
-          <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
-            {dailySales.length === 0 ? (
-              <p className="p-6 text-center text-xs text-slate-400">No daily sales aggregated yet.</p>
-            ) : (
-              dailySales.map((item) => (
-                <div key={item.date} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-slate-800">{item.date}</p>
-                    <p className="text-[11px] text-slate-400">
-                      {item.count} transaction{item.count !== 1 ? "s" : ""} • {item.unitsSold} units
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-extrabold text-indigo-600">
-                      ₹{(item?.totalSales ?? 0).toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+      {/* ⚡ Quick Actions Grid */}
+      <motion.div variants={cardVariants} className="space-y-3">
+        <h2 className="text-xs font-bold text-[#FDE68A]/80 uppercase tracking-widest px-1">Quick Actions</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -4 }}
+            onClick={() => navigate('/sales')}
+            className="flex flex-col items-center justify-center p-5 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 shadow-lg hover:border-[#F59E0B] transition-all active:bg-[#3F3F46] cursor-pointer"
+          >
+            <div className="p-3.5 rounded-2xl bg-[#F59E0B] text-[#18181B] mb-3 shadow-md font-bold">
+              <ShoppingCart className="w-7 h-7" />
+            </div>
+            <span className="text-sm font-bold text-[#FFFBEB]">New Sale</span>
+            <span className="text-[11px] text-[#FDE68A]/70 mt-0.5">Quick Checkout</span>
+          </motion.button>
 
-        {/* Recent Transactions List */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">Recent Transactions</h3>
-            <Link to="/sales" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1">
-              <span>View Terminal</span>
-              <ArrowRight className="w-3 h-3" />
-            </Link>
-          </div>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -4 }}
+            onClick={() => navigate('/scanner')}
+            className="flex flex-col items-center justify-center p-5 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 shadow-lg hover:border-[#F59E0B] transition-all active:bg-[#3F3F46] cursor-pointer"
+          >
+            <div className="p-3.5 rounded-2xl bg-[#F59E0B] text-[#18181B] mb-3 shadow-md font-bold">
+              <Scan className="w-7 h-7" />
+            </div>
+            <span className="text-sm font-bold text-[#FFFBEB]">AI Scanner</span>
+            <span className="text-[11px] text-[#FDE68A]/70 mt-0.5">Scan Bills</span>
+          </motion.button>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-50 text-slate-700 border-b border-slate-200 font-semibold">
-                <tr>
-                  <th className="px-5 py-3">ID</th>
-                  <th className="px-5 py-3">Product</th>
-                  <th className="px-5 py-3">Quantity</th>
-                  <th className="px-5 py-3 text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {recentSales.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="p-6 text-center text-slate-400">
-                      No transactions recorded yet.
-                    </td>
-                  </tr>
-                ) : (
-                  recentSales.map((s) => (
-                    <tr key={s.saleID} className="hover:bg-slate-50/70">
-                      <td className="px-5 py-3 font-mono font-medium text-indigo-600">
-                        #{s.saleID}
-                      </td>
-                      <td className="px-5 py-3 font-medium text-slate-800">
-                        {s.productName}
-                      </td>
-                      <td className="px-5 py-3 font-semibold text-slate-700">
-                        {s.quantitySold}x
-                      </td>
-                      <td className="px-5 py-3 text-right font-bold text-emerald-600">
-                        ₹{(s?.totalAmount ?? 0).toFixed(2)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -4 }}
+            onClick={() => navigate('/products')}
+            className="flex flex-col items-center justify-center p-5 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 shadow-lg hover:border-[#F59E0B] transition-all active:bg-[#3F3F46] cursor-pointer"
+          >
+            <div className="p-3.5 rounded-2xl bg-[#F59E0B] text-[#18181B] mb-3 shadow-md font-bold">
+              <Package className="w-7 h-7" />
+            </div>
+            <span className="text-sm font-bold text-[#FFFBEB]">Inventory</span>
+            <span className="text-[11px] text-[#FDE68A]/70 mt-0.5">Manage Items</span>
+          </motion.button>
+
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -4 }}
+            onClick={() => navigate('/reports')}
+            className="flex flex-col items-center justify-center p-5 rounded-2xl bg-[#27272A] border border-[#F59E0B]/20 shadow-lg hover:border-[#F59E0B] transition-all active:bg-[#3F3F46] cursor-pointer"
+          >
+            <div className="p-3.5 rounded-2xl bg-[#F59E0B] text-[#18181B] mb-3 shadow-md font-bold">
+              <BarChart3 className="w-7 h-7" />
+            </div>
+            <span className="text-sm font-bold text-[#FFFBEB]">Analytics</span>
+            <span className="text-[11px] text-[#FDE68A]/70 mt-0.5">Sales Reports</span>
+          </motion.button>
+
         </div>
-      </div>
-    </div>
+      </motion.div>
+
+      {/* 📊 Metrics Overview */}
+      <motion.div variants={cardVariants} className="space-y-3">
+        <h2 className="text-xs font-bold text-[#FDE68A]/80 uppercase tracking-widest px-1">Overview Metrics</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          
+          <motion.div 
+            whileHover={{ y: -3 }}
+            onClick={() => navigate('/products')}
+            className="p-5 rounded-2xl bg-[#27272A]/60 border border-[#F59E0B]/20 flex items-center space-x-4 cursor-pointer hover:bg-[#27272A] transition-all"
+          >
+            <div className="p-3 rounded-xl bg-[#F59E0B]/20 text-[#F59E0B]">
+              <Package className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-xs text-[#FDE68A]/70">Products</p>
+              <p className="text-xl font-bold text-[#FFFBEB]">{summaryData.totalProducts}</p>
+            </div>
+          </motion.div>
+
+          <motion.div 
+            whileHover={{ y: -3 }}
+            onClick={() => navigate('/reports')}
+            className="p-5 rounded-2xl bg-[#27272A]/60 border border-[#F59E0B]/20 flex items-center space-x-4 cursor-pointer hover:bg-[#27272A] transition-all"
+          >
+            <div className="p-3 rounded-xl bg-[#F59E0B]/20 text-[#F59E0B]">
+              <CreditCard className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-xs text-[#FDE68A]/70">Total Orders</p>
+              <p className="text-xl font-bold text-[#FFFBEB]">{summaryData.totalOrders}</p>
+            </div>
+          </motion.div>
+
+          <motion.div 
+            whileHover={{ y: -3 }}
+            className="p-5 rounded-2xl bg-[#27272A]/60 border border-[#F59E0B]/20 flex items-center space-x-4 col-span-2 md:col-span-1"
+          >
+            <div className="p-3 rounded-xl bg-[#F59E0B]/20 text-[#F59E0B]">
+              <Store className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-xs text-[#FDE68A]/70">Active Store</p>
+              <p className="text-xl font-bold text-[#FFFBEB]">Isolated User</p>
+            </div>
+          </motion.div>
+
+        </div>
+      </motion.div>
+
+    </motion.div>
   );
 };
 

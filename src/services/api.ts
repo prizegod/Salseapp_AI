@@ -209,10 +209,10 @@ export const scanDocument = async (file: File): Promise<DocScanResult> => {
     headers: {
       "Content-Type": "multipart/form-data",
     },
+    timeout: 120000, // 👈 AI செயலாக்கம் முடிக்க 2 நிமிடங்கள் வரை காத்திருக்க அனுமதித்தல்
   });
   return response.data;
 };
-
 // ==================== REPORTS & ANALYTICS API ====================
 export const getSummaryReport = async (): Promise<SummaryReport> => {
   const user = getCurrentUserInfo();

@@ -73,25 +73,26 @@ export const DocScanner: React.FC = () => {
     }
   };
 
-  // 🎯 2. Scan Button Action (பக்கம் ரீப்ரெஷ் ஆகாமல் பாதுகாப்பாக ஏபிஇ கோரிக்கை அனுப்புதல்)
-    const handleTriggerScan = async (e?: React.MouseEvent) => {
+  const handleTriggerScan = async (e?: React.MouseEvent) => {
       if (e) {
         e.preventDefault();
         e.stopPropagation();
+        if (e.nativeEvent) {
+          e.nativeEvent.stopImmediatePropagation();
+        }
       }
-  
+    
       if (!rawFile) {
         setErrorMessage('Please select an image first.');
         return;
       }
-  
+    
       setIsScanning(true);
       setErrorMessage(null);
-  
+    
       try {
-        // 🔒 C# Backend Proxy API Call via Axios
         const result: any = await scanDocument(rawFile);
-  
+    
         if (result) {
           setVendorName(result.merchantName || result.vendorName || 'General Store');
           setTotalAmount(result.totalAmount || 0);
@@ -102,7 +103,7 @@ export const DocScanner: React.FC = () => {
             qty: item.quantity || item.qty || 1,
             price: item.unitPrice || item.price || 0,
           }));
-  
+    
           setScannedItems(formattedItems);
         } else {
           setErrorMessage('No data returned from backend scanner.');
@@ -110,7 +111,7 @@ export const DocScanner: React.FC = () => {
       } catch (err: any) {
         console.error('DocScanner Error:', err);
         setErrorMessage(
-          err.response?.data?.message || 'Failed to scan document via server. Please check backend connection.'
+          err.response?.data?.message || err.message || 'Failed to scan document via server. Please check backend connection.'
         );
       } finally {
         setIsScanning(false);
@@ -124,32 +125,35 @@ export const DocScanner: React.FC = () => {
     fileInputRef.current?.click();
   };
 
-  // 4. Save to Inventory
-  const handleSaveToInventory = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    try {
-      setIsSaved(true);
-      
-      for (const item of scannedItems) {
-        await createProduct({
-          name: item.name,
-          category: 'Scanned Invoice',
-          price: item.price,
-          stock: item.qty,
-        });
+  /// 4. Save to Inventory (பக்கம் ரீப்ரெஷ் ஆகாமல் இருக்க தடுக்கப்பட்டது)
+    const handleSaveToInventory = async (e: React.MouseEvent) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
       }
-
-      setTimeout(() => {
-        setIsSaved(false);
-        setSelectedImage(null);
-        setRawFile(null);
-        setScannedItems([]);
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to save scanned items:', err);
-    }
-  };
-
+      
+      try {
+        setIsSaved(true);
+        
+        for (const item of scannedItems) {
+          await createProduct({
+            name: item.name,
+            category: 'Scanned Invoice',
+            price: item.price,
+            stock: item.qty,
+          });
+        }
+  
+        setTimeout(() => {
+          setIsSaved(false);
+          setSelectedImage(null);
+          setRawFile(null);
+          setScannedItems([]);
+        }, 2000);
+      } catch (err) {
+        console.error('Failed to save scanned items:', err);
+      }
+    };
   return (
     <motion.div 
       className="min-h-screen bg-[#18181B] p-4 md:p-8 text-[#FFFBEB] pb-32 max-w-7xl mx-auto"

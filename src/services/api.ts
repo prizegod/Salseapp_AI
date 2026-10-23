@@ -52,7 +52,7 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// 3. Response Interceptor (Handles Unauthorized Errors Safely)
+// 3. Response Interceptor
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -83,14 +83,7 @@ export const loginUser = async (credentials: { username: string; password: strin
   return response.data;
 };
 
-export const registerUser = async (userData: {
-  username: string;
-  fullName?: string;
-  storeName?: string;
-  email?: string;
-  password: string;
-  role?: string;
-}) => {
+export const registerUser = async (userData: any) => {
   const response = await api.post<{ message: string }>("/Auth/register", userData);
   return response.data;
 };
@@ -107,11 +100,6 @@ export const getProducts = async (): Promise<Product[]> => {
   const url = storeId ? `/products?storeId=${storeId}` : "/products";
   
   const response = await api.get<Product[]>(url);
-  return response.data;
-};
-
-export const getProductById = async (id: number): Promise<Product> => {
-  const response = await api.get<Product>(`/products/${id}`);
   return response.data;
 };
 
@@ -138,12 +126,7 @@ export const deleteProduct = async (id: number): Promise<{ message: string }> =>
   return response.data;
 };
 
-// ==================== STORES & SALES API ====================
-export const getStores = async (): Promise<Store[]> => {
-  const response = await api.get<Store[]>("/stores");
-  return response.data;
-};
-
+// ==================== SALES API ====================
 export const getSales = async (): Promise<DailySale[]> => {
   const user = getCurrentUserInfo();
   let url = "/Sales";
@@ -158,20 +141,9 @@ export const getSales = async (): Promise<DailySale[]> => {
   return response.data;
 };
 
-export interface CreateSalePayload {
-  storeId: number;
-  items: Array<{
-    productId: number;
-    name: string;
-    price: number;
-    quantity: number;
-  }>;
-  totalAmount: number;
-}
-
 export const recordSale = async (data: any): Promise<any> => {
   const currentStoreId = getUserStoreId() || data.storeId || 1;
-  const payload: CreateSalePayload = {
+  const payload = {
     storeId: currentStoreId,
     items: data.items && data.items.length > 0
       ? data.items.map((item: any) => ({
@@ -195,12 +167,7 @@ export const recordSale = async (data: any): Promise<any> => {
   return response.data;
 };
 
-export const deleteSale = async (id: number): Promise<{ message: string }> => {
-  const response = await api.delete<{ message: string }>(`/Sales/${id}`);
-  return response.data;
-};
-
-// ==================== OTHER SERVICES ====================
+// ==================== DOCUMENT SCANNER API ====================
 export const scanDocument = async (file: File): Promise<DocScanResult> => {
   const formData = new FormData();
   formData.append("file", file);
@@ -209,15 +176,16 @@ export const scanDocument = async (file: File): Promise<DocScanResult> => {
     headers: {
       "Content-Type": "multipart/form-data",
     },
-    timeout: 120000, // 👈 AI செயலாக்கம் முடிக்க 2 நிமிடங்கள் வரை காத்திருக்க அனுமதித்தல்
+    timeout: 120000,
   });
   return response.data;
 };
+
 // ==================== REPORTS & ANALYTICS API ====================
 export const getSummaryReport = async (): Promise<SummaryReport> => {
   const user = getCurrentUserInfo();
   const storeId = user?.storeId || user?.id;
-  const url = storeId ? `/reports/summary?storeId=${storeId}` : "/reports/summary";
+  const url = storeId ? `/Sales/summary?storeId=${storeId}` : "/Sales/summary";
   const response = await api.get<SummaryReport>(url);
   return response.data;
 };
@@ -230,7 +198,6 @@ export const getDailySalesRecords = async (): Promise<DailySalesRecord[]> => {
   return response.data;
 };
 
-// 🎯 டிரான்சாக்ஷன் ஹிஸ்டரிக்கான புதிய API
 export const getRecentSalesRecords = async (): Promise<any[]> => {
   const user = getCurrentUserInfo();
   const storeId = user?.storeId || user?.id;

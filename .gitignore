@@ -16,3 +16,7 @@ android/.idea/
 android/*.iml
 android/app/*.iml
 android/local.properties
+bin/
+obj/
+appsettings.json
+appsettings.Development.json

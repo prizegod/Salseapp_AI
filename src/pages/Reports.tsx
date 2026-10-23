@@ -11,7 +11,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getSummaryReport, getRecentSalesRecords } from '../services/api'; // 🎯 getRecentSalesRecords இறக்குமதி செய்யப்பட்டுள்ளது
+import { getSummaryReport, getRecentSalesRecords } from '../services/api';
 
 interface SaleRecord {
   id: string;
@@ -46,28 +46,23 @@ export const Reports: React.FC = () => {
 
   const [summary, setSummary] = useState({ todaySales: 0, totalOrders: 0, avgOrderValue: 0 });
   const [recentSales, setRecentSales] = useState<SaleRecord[]>([]);
+  const [allSales, setAllSales] = useState<SaleRecord[]>([]); 
   const [isLoading, setIsLoading] = useState(true);
 
-  // 🎯 டேட்டாபேஸிலிருந்து சரியான லைவ் டேட்டாவைப் பெறுதல்
+  // 1. டேட்டாபேஸிலிருந்து லைவ் டேட்டாவைப் பெறுதல்
   useEffect(() => {
     const fetchReportData = async () => {
       try {
         setIsLoading(true);
-        const summaryData: any = await getSummaryReport();
-        const salesData: any = await getRecentSalesRecords(); // 👈 இங்கே மாற்றப்பட்டுள்ளது
-
-        if (summaryData) {
-          setSummary({
-            todaySales: summaryData.todaySales || summaryData.totalRevenue || 0,
-            totalOrders: summaryData.totalOrders || summaryData.totalSalesCount || 0,
-            avgOrderValue: (summaryData.totalOrders || summaryData.totalSalesCount || 0) > 0 
-              ? Math.round((summaryData.totalRevenue || 0) / (summaryData.totalOrders || summaryData.totalSalesCount || 1)) 
-              : 0
-          });
-        }
+        const salesData: any = await getRecentSalesRecords();
 
         if (salesData && salesData.length > 0) {
-          setRecentSales(salesData);
+          setAllSales(salesData);
+          filterDataByTime(salesData, timeFilter);
+        } else {
+          setAllSales([]);
+          setRecentSales([]);
+          setSummary({ todaySales: 0, totalOrders: 0, avgOrderValue: 0 });
         }
       } catch (err) {
         console.error('Failed to load report analytics from database:', err);
@@ -78,6 +73,50 @@ export const Reports: React.FC = () => {
 
     fetchReportData();
   }, []);
+
+  // 2. 🎯 ஃபில்டருக்கு ஏற்ப (Today, Week, Month) டிரான்சாக்ஷன் மற்றும் சம்மரி மெட்ரிக்ஸ்களை கால்குலேட் செய்தல்
+  const filterDataByTime = (sales: SaleRecord[], filter: 'today' | 'week' | 'month') => {
+    const now = new Date();
+    
+    const filtered = sales.filter((sale) => {
+      if (!sale.date) return false;
+      const saleDate = new Date(sale.date);
+      if (isNaN(saleDate.getTime())) return true;
+
+      if (filter === 'today') {
+        return saleDate.toDateString() === now.toDateString();
+      } else if (filter === 'week') {
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(now.getDate() - 7);
+        return saleDate >= oneWeekAgo && saleDate <= now;
+      } else if (filter === 'month') {
+        return (
+          saleDate.getMonth() === now.getMonth() &&
+          saleDate.getFullYear() === now.getFullYear()
+        );
+      }
+      return true;
+    });
+
+    setRecentSales(filtered);
+
+    // 🎯 ஃபில்டர் செய்யப்பட்ட டேட்டாவுக்கேற்ப சம்மரி தொகைகளைக் கணக்கிடுதல்
+    const totalRevenue = filtered.reduce((acc, curr) => acc + Number(curr.totalAmount || 0), 0);
+    const totalOrdersCount = filtered.length;
+    const avgOrderVal = totalOrdersCount > 0 ? Math.round(totalRevenue / totalOrdersCount) : 0;
+
+    setSummary({
+      todaySales: totalRevenue,
+      totalOrders: totalOrdersCount,
+      avgOrderValue: avgOrderVal
+    });
+  };
+
+  // ஃபில்டர் மாறும்போது டேட்டாவை உடனுக்குடன் ரீசெட் செய்து மாற்றுதல்
+  const handleFilterChange = (filter: 'today' | 'week' | 'month') => {
+    setTimeFilter(filter);
+    filterDataByTime(allSales, filter);
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -126,7 +165,7 @@ export const Reports: React.FC = () => {
         {(['today', 'week', 'month'] as const).map((filter) => (
           <button
             key={filter}
-            onClick={() => setTimeFilter(filter)}
+            onClick={() => handleFilterChange(filter)}
             className={`px-4 py-2 rounded-xl text-xs font-bold capitalize transition-all cursor-pointer ${
               timeFilter === filter 
                 ? 'bg-[#F59E0B] text-[#18181B] shadow-md shadow-[#F59E0B]/20' 
@@ -138,7 +177,7 @@ export const Reports: React.FC = () => {
         ))}
       </div>
 
-      {/* Metrics Cards */}
+      {/* Metrics Cards (Dynamic Calculation based on selected filter) */}
       <motion.div 
         className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8"
         variants={containerVariants}
@@ -189,15 +228,15 @@ export const Reports: React.FC = () => {
       <motion.div variants={itemVariants} className="bg-[#27272A] border border-[#F59E0B]/20 rounded-3xl p-5 shadow-xl space-y-4">
         <div className="flex justify-between items-center pb-3 border-b border-[#F59E0B]/20">
           <h2 className="text-lg font-bold text-[#FFFBEB] flex items-center gap-2">
-            <FileSpreadsheet className="w-5 h-5 text-[#F59E0B]" /> Transaction History
+            <FileSpreadsheet className="w-5 h-5 text-[#F59E0B]" /> Transaction History ({timeFilter.toUpperCase()})
           </h2>
-          <span className="text-xs text-[#FDE68A]/70">{recentSales.length} Recent Bills</span>
+          <span className="text-xs text-[#FDE68A]/70">{recentSales.length} Records Found</span>
         </div>
 
         {isLoading ? (
           <div className="text-center py-10 text-[#FDE68A]/60 text-xs">Loading transaction records...</div>
         ) : recentSales.length === 0 ? (
-          <div className="text-center py-10 text-[#FDE68A]/60 text-xs">No sales transactions found in database.</div>
+          <div className="text-center py-10 text-[#FDE68A]/60 text-xs">No sales transactions found for this period.</div>
         ) : (
           <div className="space-y-3">
             {recentSales.map((sale) => (
@@ -210,15 +249,17 @@ export const Reports: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <span className="font-bold text-[#FFFBEB]">{sale.id}</span>
                     <span className="text-[10px] bg-[#27272A] text-[#FDE68A] px-2 py-0.5 rounded-md border border-[#F59E0B]/20">
-                      {sale.paymentMode}
+                      {sale.paymentMode || 'Paid'}
                     </span>
                   </div>
-                  <p className="text-[#FDE68A]/60">{sale.date} • {sale.itemsCount} Items</p>
+                  <p className="text-[#FDE68A]/60">
+                    {new Date(sale.date).toLocaleString()} • {sale.itemsCount} Items
+                  </p>
                 </div>
 
                 <div className="text-right">
                   <p className="text-base font-extrabold text-[#FFFBEB]">₹{sale.totalAmount}</p>
-                  <span className="text-[10px] text-emerald-400 font-semibold">Paid</span>
+                  <span className="text-[10px] text-emerald-400 font-semibold">Successful</span>
                 </div>
               </motion.div>
             ))}

@@ -18,6 +18,7 @@ import { Products } from "./pages/Products";
 import { Sale } from "./pages/Sale";
 import { Reports } from "./pages/Reports";
 import { UserManagement } from "./pages/UserManagement";
+import { Profile } from "./pages/Profile"; // 🎯 புதிய Profile பக்கம் சேர்க்கப்பட்டுள்ளது
 
 // 🎯 DocScanner-ஐ எரர் இல்லாமல் லோட் செய்ய Lazy Import
 const DocScanner = lazy(() => import("./pages/DocScanner"));
@@ -76,7 +77,7 @@ export function App() {
             }
           />
 
-          {/* 2. 🎯 Admin Dedicated Dashboard Route (Login.tsx-லிருந்து வரும் navigate('/admin-dashboard') -க்காகச் சேர்க்கப்பட்டது) */}
+          {/* 2. Admin Dedicated Dashboard Route */}
           <Route
             path="/admin-dashboard"
             element={
@@ -143,6 +144,18 @@ export function App() {
               <ProtectedRoute allowedRoles={["admin", "manager"]}>
                 <MainLayout>
                   <UserManagement />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 8. 🎯 Profile Page (নতুন প্রোফাইল பக்கம்) */}
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <MainLayout>
+                  <Profile />
                 </MainLayout>
               </ProtectedRoute>
             }
